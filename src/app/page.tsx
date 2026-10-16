@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-16">
@@ -13,6 +15,12 @@ export default function Home() {
         </code>{" "}
         after release.
       </p>
+      <Link
+        href="/posts"
+        className="inline-flex w-fit rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+      >
+        View posts
+      </Link>
     </main>
   );
 }
