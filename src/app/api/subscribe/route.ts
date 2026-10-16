@@ -3,6 +3,7 @@ import { getDb } from "@/db/client";
 import { isValidEmail, normalizeEmail } from "@/lib/email/validate";
 import { checkRateLimit } from "@/lib/rate-limit/memory";
 import { getResendClient, getResendFromAddress } from "@/lib/resend/client";
+import { requireHumanVisitor } from "@/lib/botid/verify";
 import { getRequiredPublicSiteUrl } from "@/lib/site/public-origin";
 import { requestSubscription } from "@/lib/subscribers/subscribe";
 import { SUBSCRIBE_HTTP_ACK } from "@/lib/subscribers/subscribe-response";
@@ -16,6 +17,11 @@ function getClientIp(request: Request): string {
 }
 
 export async function POST(request: Request) {
+  const botGate = await requireHumanVisitor();
+  if (!botGate.ok) {
+    return botGate.response;
+  }
+
   const ip = getClientIp(request);
   const rate = checkRateLimit(`subscribe:${ip}`, {
     limit: 8,

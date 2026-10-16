@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { BotIdProtect } from "@/components/botid-protect";
 import { AppProviders } from "@/components/providers/app-providers";
 import { SiteFooter } from "@/components/site-footer";
 import { getPrivyAppId } from "@/lib/privy/config";
@@ -32,6 +33,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <BotIdProtect />
+      </head>
       <body className="min-h-full flex flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
         <AppProviders privyAppId={privyAppId}>
           <div className="flex-1">{children}</div>

@@ -8,6 +8,10 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as schema from "@/db/schema";
 import { subscribers } from "@/db/schema";
+import {
+  resetBotIdCheckForTests,
+  setBotIdCheckForTests,
+} from "@/lib/botid/verify";
 import { SUBSCRIBE_HTTP_ACK } from "@/lib/subscribers/subscribe-response";
 import { POST } from "./route";
 
@@ -31,10 +35,12 @@ describe("POST /api/subscribe", () => {
     testDb = await createTestDb();
     vi.stubEnv("SUBSCRIBER_TOKEN_SECRET", "test-secret");
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://dear.example.test");
+    setBotIdCheckForTests(async () => ({ isBot: false }));
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    resetBotIdCheckForTests();
   });
 
   async function postSubscribe(email: string, host = "https://evil-scanner.example") {
@@ -121,5 +127,11 @@ describe("POST /api/subscribe", () => {
   it("still returns 400 for invalid email", async () => {
     const response = await postSubscribe("not-an-email");
     expect(response.status).toBe(400);
+  });
+
+  it("returns 403 when BotID flags the request as a bot", async () => {
+    setBotIdCheckForTests(async () => ({ isBot: true }));
+    const response = await postSubscribe("new@example.test");
+    expect(response.status).toBe(403);
   });
 });

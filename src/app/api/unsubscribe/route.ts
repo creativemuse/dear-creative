@@ -91,7 +91,6 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     outcome,
-    email: auth.email,
     rfc8058,
   });
 }
