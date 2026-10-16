@@ -1,0 +1,6 @@
+email,name
+valid.user@example.test,Valid User
+VALID.USER@example.test,Duplicate Case
+not-an-email,Bad Row
+another@example.test,Another User
+,@empty
