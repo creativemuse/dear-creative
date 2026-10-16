@@ -47,6 +47,27 @@ describe("requirePrivyAuth", () => {
     }
   });
 
+  it("returns 403 when admin allowlist is empty or unset", async () => {
+    vi.stubEnv("PRIVY_ADMIN_USER_IDS", "");
+    setPrivyTokenVerifierForTests({
+      verifyAuthToken: vi.fn().mockResolvedValue({
+        userId: "did:privy:any-user",
+      }),
+    });
+
+    const result = await requirePrivyAuth(
+      new Request("http://localhost/api", {
+        headers: { Authorization: "Bearer token" },
+      }),
+      { requireAdmin: true },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+    }
+  });
+
   it("returns 403 when user is not on admin allowlist", async () => {
     vi.stubEnv("PRIVY_ADMIN_USER_IDS", "did:privy:allowed-only");
     setPrivyTokenVerifierForTests({

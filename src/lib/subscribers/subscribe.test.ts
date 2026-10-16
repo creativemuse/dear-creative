@@ -39,7 +39,7 @@ describe("requestSubscription", () => {
       db,
       resend: { send },
       tokenSecret: "secret",
-      siteOrigin: "http://localhost:3010",
+      siteOrigin: "https://dear.example.test",
       resendFrom: "news@example.test",
     });
 
@@ -50,6 +50,27 @@ describe("requestSubscription", () => {
       .where(eq(subscribers.email, "new@example.test"));
     expect(row?.status).toBe("pending");
     expect(send).toHaveBeenCalledOnce();
+    const html = send.mock.calls[0]?.[0]?.html as string;
+    expect(html).toContain("https://dear.example.test/api/subscribe/confirm");
+    expect(html).not.toContain("localhost:3010");
+  });
+
+  it("uses configured public site URL in confirm links only", async () => {
+    const db = await createTestDb();
+    const send = vi.fn(async () => ({ id: "1" }));
+
+    await requestSubscription("link@example.test", {
+      db,
+      resend: { send },
+      tokenSecret: "secret",
+      siteOrigin: "https://news.dear.example.test",
+      resendFrom: "news@example.test",
+    });
+
+    const html = send.mock.calls[0]?.[0]?.html as string;
+    expect(html).toMatch(
+      /^[\s\S]*https:\/\/news\.dear\.example\.test\/api\/subscribe\/confirm\?token=[\s\S]*$/,
+    );
   });
 
   it("does not resubscribe unsubscribed addresses", async () => {
