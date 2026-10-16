@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "tsx scripts/db-migrate-local.ts"
+    "db:migrate:local": "tsx scripts/db-migrate-local.ts",
+    "import:paragraph": "tsx scripts/import-paragraph-subscribers.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",
