@@ -7,6 +7,11 @@ import {
 import { GET } from "./route";
 
 describe("GET /api/posts/[slug]/full", () => {
+  beforeEach(() => {
+    setPaymentsEnabledForTests(undefined);
+    resetX402PaymentVerifierForTests();
+  });
+
   afterEach(() => {
     setPaymentsEnabledForTests(undefined);
     vi.unstubAllEnvs();
