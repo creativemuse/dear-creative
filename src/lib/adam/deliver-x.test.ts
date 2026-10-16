@@ -127,7 +127,7 @@ describe("deliverPostTeaserToX", () => {
     const postId = await seedApprovedPost(db);
 
     const postTweet = vi.fn(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 75));
       return { tweetId: "tweet-concurrent" };
     });
     setXClientForTests({ postTweet });
@@ -195,7 +195,7 @@ describe("deliverPostTeaserToX", () => {
       if (calls === 1) {
         throw new Error("temporary outage");
       }
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 75));
       return { tweetId: "tweet-after-retry" };
     });
     setXClientForTests({ postTweet });
