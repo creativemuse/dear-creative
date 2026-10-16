@@ -8,7 +8,7 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { describe, expect, it } from "vitest";
 import * as schema from "@/db/schema";
 import { approvals, posts } from "@/db/schema";
-import { publishDraftToTurso } from "./publish-draft";
+import { DuplicateSlugError, publishDraftToTurso } from "./publish-draft";
 
 async function createTestDb() {
   const dir = mkdtempSync(join(tmpdir(), "dear-adam-publish-"));
@@ -39,6 +39,21 @@ describe("publishDraftToTurso", () => {
       .where(eq(approvals.id, result.approvalId));
     expect(approval?.status).toBe("pending");
     expect(approval?.contentHash).toBe(result.contentHash);
+  });
+
+  it("throws DuplicateSlugError when slug already exists", async () => {
+    const db = await createTestDb();
+    await publishDraftToTurso(db, {
+      slug: "duplicate-slug",
+      title: "First",
+    });
+
+    await expect(
+      publishDraftToTurso(db, {
+        slug: "duplicate-slug",
+        title: "Second",
+      }),
+    ).rejects.toBeInstanceOf(DuplicateSlugError);
   });
 
   it("supports dry-run without writes", async () => {

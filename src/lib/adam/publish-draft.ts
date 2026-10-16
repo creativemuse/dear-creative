@@ -22,6 +22,16 @@ export type PublishDraftResult = {
   dryRun: boolean;
 };
 
+export class DuplicateSlugError extends Error {
+  readonly slug: string;
+
+  constructor(slug: string) {
+    super(`Post slug already exists: ${slug}`);
+    this.name = "DuplicateSlugError";
+    this.slug = slug;
+  }
+}
+
 export async function publishDraftToTurso(
   db: DearCreativeDb,
   input: PublishDraftInput,
@@ -45,6 +55,11 @@ export async function publishDraftToTurso(
       contentHash,
       dryRun: true,
     };
+  }
+
+  const existing = await findPostBySlug(db, snapshot.slug);
+  if (existing) {
+    throw new DuplicateSlugError(snapshot.slug);
   }
 
   const postId = randomUUID();

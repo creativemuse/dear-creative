@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/db/client";
-import { publishDraftToTurso } from "@/lib/adam/publish-draft";
+import {
+  DuplicateSlugError,
+  publishDraftToTurso,
+} from "@/lib/adam/publish-draft";
 import { requireAdamAuth } from "@/lib/adam/require-auth";
 
 type PublishBody = {
@@ -35,15 +38,25 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await publishDraftToTurso(getDb(), {
-    slug,
-    title,
-    teaserText: body.teaserText,
-    emailSubject: body.emailSubject,
-    emailHtml: body.emailHtml,
-    sponsorId: body.sponsorId,
-    dryRun: body.dryRun,
-  });
+  try {
+    const result = await publishDraftToTurso(getDb(), {
+      slug,
+      title,
+      teaserText: body.teaserText,
+      emailSubject: body.emailSubject,
+      emailHtml: body.emailHtml,
+      sponsorId: body.sponsorId,
+      dryRun: body.dryRun,
+    });
 
-  return NextResponse.json(result);
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof DuplicateSlugError) {
+      return NextResponse.json(
+        { error: "Post slug already exists", slug: error.slug },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
 }
