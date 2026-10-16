@@ -90,6 +90,8 @@ describe("/api/unsubscribe", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.outcome).toBe("unsubscribed");
+    expect(body.email).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain("live@example.test");
 
     const [row] = await testDb
       .select()

@@ -17,15 +17,17 @@ export function SubscribeForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
-      const data = (await response.json()) as { outcome?: string; error?: string };
+      const data = (await response.json()) as {
+        message?: string;
+        error?: string;
+      };
       if (!response.ok) {
         setMessage(data.error ?? "Could not subscribe.");
         return;
       }
       setMessage(
-        data.outcome === "blocked" || data.outcome === "already_subscribed"
-          ? "If this address is eligible, check your inbox for a confirmation email."
-          : "Check your inbox to confirm your subscription.",
+        data.message ??
+          "If this address is eligible, check your inbox for a confirmation email.",
       );
       setEmail("");
     } catch {

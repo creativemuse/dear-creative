@@ -32,5 +32,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Invalid subscription state" }, { status: 400 });
   }
 
-  return NextResponse.json({ outcome: "confirmed", email: verified.email });
+  return NextResponse.json({ outcome: "confirmed" });
 }
