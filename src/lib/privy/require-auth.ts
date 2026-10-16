@@ -30,7 +30,7 @@ export async function requirePrivyAuth(
     const user = await verifyPrivyAccessToken(token);
     if (options.requireAdmin) {
       const allowlist = getPrivyAdminUserIds();
-      if (allowlist.size > 0 && !allowlist.has(user.userId)) {
+      if (allowlist.size === 0 || !allowlist.has(user.userId)) {
         return {
           ok: false,
           response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
