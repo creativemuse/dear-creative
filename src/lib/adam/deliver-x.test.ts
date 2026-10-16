@@ -260,4 +260,35 @@ describe("deliverPostTeaserToX", () => {
     expect(receipt?.status).toBe("completed");
     expect(receipt?.idempotencyKey).toBe("reclaim-stale");
   });
+
+  it("marks the receipt failed when the provider call times out", async () => {
+    vi.useFakeTimers();
+    const db = await createTestDb();
+    const postId = await seedApprovedPost(db);
+
+    setXClientForTests({
+      postTweet: () => new Promise(() => undefined),
+    });
+
+    const deliveryPromise = deliverPostTeaserToX(db, {
+      postId,
+      idempotencyKey: "timeout-key",
+      providerTimeoutMs: 50,
+    });
+    await vi.advanceTimersByTimeAsync(60);
+    const result = await deliveryPromise;
+
+    expect(result.outcome).toBe("provider_failed");
+    if (result.outcome === "provider_failed") {
+      expect(result.errorMessage).toMatch(/timed out/i);
+    }
+
+    const [receipt] = await db
+      .select()
+      .from(deliveryReceipts)
+      .where(eq(deliveryReceipts.postId, postId));
+    expect(receipt?.status).toBe("failed");
+
+    vi.useRealTimers();
+  });
 });

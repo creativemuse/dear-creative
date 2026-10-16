@@ -9,6 +9,7 @@ export type DeliverXInput = {
   idempotencyKey: string;
   dryRun?: boolean;
   claimOptions?: ClaimDeliveryOptions;
+  providerTimeoutMs?: number;
 };
 
 export type DeliverXResult =
@@ -48,6 +49,7 @@ export async function deliverPostTeaserToX(
       tweetId: provider.tweetId,
     }),
     claimOptions: input.claimOptions,
+    providerTimeoutMs: input.providerTimeoutMs,
   });
 
   if (result.outcome === "blocked") {

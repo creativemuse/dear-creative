@@ -1,3 +1,8 @@
+import {
+  DEFAULT_PROVIDER_CALL_TIMEOUT_MS,
+  withProviderTimeout,
+} from "@/lib/net/provider-timeout";
+
 /** Base Sepolia — agent paywall testnet per spec v2 §3. */
 export const X402_BASE_SEPOLIA_CHAIN_ID = 84532;
 
@@ -87,10 +92,26 @@ async function getVerifier(): Promise<X402PaymentVerifier | null> {
 export async function verifyAgentPaymentHeader(
   paymentHeader: string,
   input: { slug: string; resourceUrl: string },
+  providerTimeoutMs?: number,
 ): Promise<X402VerifyResult> {
   const verifier = await getVerifier();
   if (!verifier) {
     return { ok: false, reason: "x402_verifier_unconfigured" };
   }
-  return verifier.verifyPaymentHeader(paymentHeader, input);
+  try {
+    return await withProviderTimeout(
+      () => verifier.verifyPaymentHeader(paymentHeader, input),
+      providerTimeoutMs ?? DEFAULT_PROVIDER_CALL_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === "TimeoutError" ||
+        error.name === "AbortError" ||
+        error.message.includes("timed out"))
+    ) {
+      return { ok: false, reason: "x402_verifier_timed_out" };
+    }
+    throw error;
+  }
 }

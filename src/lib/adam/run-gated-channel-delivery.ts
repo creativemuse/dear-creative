@@ -8,6 +8,11 @@ import {
 } from "@/lib/approval/claim-delivery-slot";
 import { assertDeliverable } from "@/lib/approval/delivery-gate";
 import { recordDeliveryAudit } from "@/lib/approval/record-delivery";
+import {
+  DEFAULT_PROVIDER_CALL_TIMEOUT_MS,
+  ProviderCallTimeoutError,
+  withProviderTimeout,
+} from "@/lib/net/provider-timeout";
 
 export type GatedDeliveryBlockedReason =
   | "not_found"
@@ -28,6 +33,7 @@ export type RunGatedChannelDeliveryInput<T> = {
   send: () => Promise<T>;
   formatSuccess: (result: T) => Record<string, unknown>;
   claimOptions?: ClaimDeliveryOptions;
+  providerTimeoutMs?: number;
 };
 
 export type RunGatedChannelDeliveryResult =
@@ -70,7 +76,10 @@ export async function runGatedChannelDelivery<T>(
   }
 
   try {
-    const providerResult = await input.send();
+    const providerResult = await withProviderTimeout(
+      () => input.send(),
+      input.providerTimeoutMs ?? DEFAULT_PROVIDER_CALL_TIMEOUT_MS,
+    );
     await markDeliveryCompleted(input.db, {
       postId: input.postId,
       channel: input.channel,
@@ -87,8 +96,7 @@ export async function runGatedChannelDelivery<T>(
       data: input.formatSuccess(providerResult),
     };
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Provider delivery failed";
+    const message = formatProviderFailureMessage(error);
     await markDeliveryFailed(input.db, {
       postId: input.postId,
       channel: input.channel,
@@ -96,4 +104,17 @@ export async function runGatedChannelDelivery<T>(
     });
     return { outcome: "provider_failed", errorMessage: message };
   }
+}
+
+function formatProviderFailureMessage(error: unknown): string {
+  if (error instanceof ProviderCallTimeoutError) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    if (error.name === "TimeoutError" || error.name === "AbortError") {
+      return "Provider call timed out";
+    }
+    return error.message;
+  }
+  return "Provider delivery failed";
 }
