@@ -37,6 +37,7 @@ export const approvalStatusEnum = [
 ] as const;
 
 export const deliveryChannelEnum = ["publish", "x", "email"] as const;
+export type DeliveryChannel = (typeof deliveryChannelEnum)[number];
 
 export const sponsors = sqliteTable("sponsors", {
   id: text("id").primaryKey(),
