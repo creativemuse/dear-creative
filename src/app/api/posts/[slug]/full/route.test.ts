@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setPaymentsEnabledForTests } from "@/lib/payments/feature-flag";
 import {
   resetX402PaymentVerifierForTests,
   setX402PaymentVerifierForTests,
@@ -7,12 +8,13 @@ import { GET } from "./route";
 
 describe("GET /api/posts/[slug]/full", () => {
   afterEach(() => {
+    setPaymentsEnabledForTests(undefined);
     vi.unstubAllEnvs();
     resetX402PaymentVerifierForTests();
   });
 
   it("returns 501 when payments are disabled", async () => {
-    vi.stubEnv("PAYMENTS_ENABLED", "false");
+    setPaymentsEnabledForTests(false);
     const response = await GET(
       new Request("http://localhost/api/posts/hello-dear-creative/full"),
       { params: Promise.resolve({ slug: "hello-dear-creative" }) },
@@ -21,7 +23,7 @@ describe("GET /api/posts/[slug]/full", () => {
   });
 
   it("returns 402 x402 requirements for agents when payments are enabled", async () => {
-    vi.stubEnv("PAYMENTS_ENABLED", "true");
+    setPaymentsEnabledForTests(true);
     vi.stubEnv("X402_PAY_TO_ADDRESS", "0x0000000000000000000000000000000000000001");
     vi.stubEnv("X402_MAX_AMOUNT_REQUIRED", "stub-amount");
 
@@ -39,7 +41,7 @@ describe("GET /api/posts/[slug]/full", () => {
   });
 
   it("returns full post content when x402 payment header verifies", async () => {
-    vi.stubEnv("PAYMENTS_ENABLED", "true");
+    setPaymentsEnabledForTests(true);
     vi.stubEnv("X402_PAY_TO_ADDRESS", "0x0000000000000000000000000000000000000001");
     vi.stubEnv("X402_MAX_AMOUNT_REQUIRED", "stub-amount");
     setX402PaymentVerifierForTests({

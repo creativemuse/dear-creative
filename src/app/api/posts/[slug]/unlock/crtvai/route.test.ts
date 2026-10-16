@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setPaymentsEnabledForTests } from "@/lib/payments/feature-flag";
 import { POST } from "./route";
 
 describe("POST /api/posts/[slug]/unlock/crtvai", () => {
+  afterEach(() => {
+    setPaymentsEnabledForTests(undefined);
+  });
+
   it("returns 501 when payments are disabled", async () => {
-    vi.stubEnv("PAYMENTS_ENABLED", "false");
+    setPaymentsEnabledForTests(false);
     const response = await POST(
       new Request("http://localhost/api/posts/hello-dear-creative/unlock/crtvai", {
         method: "POST",
@@ -11,6 +16,5 @@ describe("POST /api/posts/[slug]/unlock/crtvai", () => {
       { params: Promise.resolve({ slug: "hello-dear-creative" }) },
     );
     expect(response.status).toBe(501);
-    vi.unstubAllEnvs();
   });
 });
