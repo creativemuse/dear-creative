@@ -1,6 +1,7 @@
 import type { DearCreativeDb } from "@/db/client";
 import { assertDeliverable } from "@/lib/approval/delivery-gate";
-import { recordDelivery } from "@/lib/approval/record-delivery";
+import { claimDeliverySlot } from "@/lib/approval/claim-delivery-slot";
+import { recordDeliveryAudit } from "@/lib/approval/record-delivery";
 import { getResendBroadcastClient } from "@/lib/resend/broadcast";
 
 export type DeliverEmailInput = {
@@ -17,12 +18,7 @@ export async function sendNewsletterEmail(
   db: DearCreativeDb,
   input: DeliverEmailInput,
 ): Promise<DeliverEmailResult> {
-  const gate = await assertDeliverable(
-    db,
-    input.postId,
-    "email",
-    input.idempotencyKey,
-  );
+  const gate = await assertDeliverable(db, input.postId, "email");
   if (!gate.ok) {
     return { outcome: "blocked", reason: gate.reason };
   }
@@ -34,23 +30,31 @@ export async function sendNewsletterEmail(
     return { outcome: "blocked", reason: "not_found" };
   }
 
-  let broadcastId = "dry-run";
   if (!dryRun) {
+    const claim = await claimDeliverySlot(db, {
+      postId: input.postId,
+      channel: "email",
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!claim.ok) {
+      return { outcome: "blocked", reason: claim.reason };
+    }
+
     const resend = getResendBroadcastClient();
     if (!resend) {
       return { outcome: "blocked", reason: "not_approved" };
     }
     const result = await resend.sendBroadcast({ subject, html });
-    broadcastId = result.broadcastId;
+
+    await recordDeliveryAudit(db, {
+      postId: input.postId,
+      channel: "email",
+      idempotencyKey: input.idempotencyKey,
+      actor: "adam",
+    });
+
+    return { outcome: "sent", broadcastId: result.broadcastId, dryRun: false };
   }
 
-  await recordDelivery(db, {
-    postId: input.postId,
-    channel: "email",
-    idempotencyKey: input.idempotencyKey,
-    actor: "adam",
-    dryRun,
-  });
-
-  return { outcome: "sent", broadcastId, dryRun };
+  return { outcome: "sent", broadcastId: "dry-run", dryRun: true };
 }

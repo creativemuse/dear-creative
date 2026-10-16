@@ -30,7 +30,7 @@ describe("assertDeliverable", () => {
       title: "T",
       status: "draft",
     });
-    const result = await assertDeliverable(db, postId, "x", "key-1");
+    const result = await assertDeliverable(db, postId, "x");
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe("not_approved");
@@ -61,7 +61,7 @@ describe("assertDeliverable", () => {
       approvedBy: "did:privy:g2",
     });
 
-    const result = await assertDeliverable(db, postId, "x", "key-2");
+    const result = await assertDeliverable(db, postId, "x");
     expect(result.ok).toBe(true);
   });
 });

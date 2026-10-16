@@ -3,7 +3,6 @@ import type { DearCreativeDb } from "@/db/client";
 import {
   approvals,
   deliveryChannelEnum,
-  deliveryReceipts,
   posts,
   type DeliveryChannel,
 } from "@/db/schema";
@@ -37,7 +36,6 @@ export async function assertDeliverable(
   db: DearCreativeDb,
   postId: string,
   channel: DeliveryChannel,
-  idempotencyKey: string,
   now = new Date(),
 ): Promise<
   | { ok: true; value: DeliveryGateSuccess }
@@ -65,15 +63,6 @@ export async function assertDeliverable(
 
   if (now.getTime() - approval.approvedAt.getTime() > APPROVAL_MAX_AGE_MS) {
     return { ok: false, reason: "approval_expired" };
-  }
-
-  const receiptRows = await db
-    .select()
-    .from(deliveryReceipts)
-    .where(eq(deliveryReceipts.idempotencyKey, idempotencyKey))
-    .limit(1);
-  if (receiptRows[0]) {
-    return { ok: false, reason: "already_delivered" };
   }
 
   if (!deliveryChannelEnum.includes(channel)) {

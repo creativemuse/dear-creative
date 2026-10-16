@@ -1,6 +1,7 @@
 import type { DearCreativeDb } from "@/db/client";
 import { assertDeliverable } from "@/lib/approval/delivery-gate";
-import { recordDelivery } from "@/lib/approval/record-delivery";
+import { claimDeliverySlot } from "@/lib/approval/claim-delivery-slot";
+import { recordDeliveryAudit } from "@/lib/approval/record-delivery";
 import { getXClient } from "@/lib/x/client";
 
 export type DeliverXInput = {
@@ -17,12 +18,7 @@ export async function deliverPostTeaserToX(
   db: DearCreativeDb,
   input: DeliverXInput,
 ): Promise<DeliverXResult> {
-  const gate = await assertDeliverable(
-    db,
-    input.postId,
-    "x",
-    input.idempotencyKey,
-  );
+  const gate = await assertDeliverable(db, input.postId, "x");
   if (!gate.ok) {
     return { outcome: "blocked", reason: gate.reason };
   }
@@ -33,23 +29,31 @@ export async function deliverPostTeaserToX(
     return { outcome: "blocked", reason: "not_found" };
   }
 
-  let tweetId = "dry-run";
   if (!dryRun) {
+    const claim = await claimDeliverySlot(db, {
+      postId: input.postId,
+      channel: "x",
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!claim.ok) {
+      return { outcome: "blocked", reason: claim.reason };
+    }
+
     const x = getXClient();
     if (!x) {
       return { outcome: "blocked", reason: "not_approved" };
     }
     const result = await x.postTweet({ text: teaser });
-    tweetId = result.tweetId;
+
+    await recordDeliveryAudit(db, {
+      postId: input.postId,
+      channel: "x",
+      idempotencyKey: input.idempotencyKey,
+      actor: "adam",
+    });
+
+    return { outcome: "posted", tweetId: result.tweetId, dryRun: false };
   }
 
-  await recordDelivery(db, {
-    postId: input.postId,
-    channel: "x",
-    idempotencyKey: input.idempotencyKey,
-    actor: "adam",
-    dryRun,
-  });
-
-  return { outcome: "posted", tweetId, dryRun };
+  return { outcome: "posted", tweetId: "dry-run", dryRun: true };
 }
