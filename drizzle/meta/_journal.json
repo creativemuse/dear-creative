@@ -15,6 +15,13 @@
       "when": 1792191779654,
       "tag": "0001_naive_nitro",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792192300994,
+      "tag": "0002_chemical_thor_girl",
+      "breakpoints": true
     }
   ]
 }

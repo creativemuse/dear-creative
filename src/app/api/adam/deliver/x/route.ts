@@ -38,9 +38,18 @@ export async function POST(request: Request) {
   });
 
   if (result.outcome === "blocked") {
+    const status =
+      result.reason === "client_unconfigured" ? 503 : 403;
     return NextResponse.json(
       { error: "Delivery blocked", reason: result.reason },
-      { status: 403 },
+      { status },
+    );
+  }
+
+  if (result.outcome === "provider_failed") {
+    return NextResponse.json(
+      { error: "Provider delivery failed", message: result.errorMessage },
+      { status: 502 },
     );
   }
 
