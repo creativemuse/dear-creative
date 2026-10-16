@@ -2,15 +2,18 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as schema from "@/db/schema";
-import { approvals, posts } from "@/db/schema";
+import { approvals, deliveryReceipts, posts } from "@/db/schema";
 import { contentHashForPost } from "@/lib/approval/snapshot-from-post";
 import { setXClientForTests, resetXClientForTests } from "@/lib/x/client";
 import { deliverPostTeaserToX } from "./deliver-x";
+
+const STALE_MS = 50;
 
 async function createTestDb() {
   const dir = mkdtempSync(join(tmpdir(), "dear-deliver-x-"));
@@ -45,6 +48,10 @@ async function seedApprovedPost(db: Awaited<ReturnType<typeof createTestDb>>) {
   return postId;
 }
 
+async function countReceipts(db: Awaited<ReturnType<typeof createTestDb>>) {
+  return (await db.select().from(deliveryReceipts)).length;
+}
+
 describe("deliverPostTeaserToX", () => {
   afterEach(() => {
     resetXClientForTests();
@@ -66,9 +73,32 @@ describe("deliverPostTeaserToX", () => {
       expect(result.tweetId).toBe("tweet-1");
     }
     expect(postTweet).toHaveBeenCalledTimes(1);
+
+    const [receipt] = await db
+      .select()
+      .from(deliveryReceipts)
+      .where(eq(deliveryReceipts.postId, postId));
+    expect(receipt?.status).toBe("completed");
   });
 
-  it("does not send again when a new idempotency key is used for the same post", async () => {
+  it("does not write a receipt when the X client is unconfigured", async () => {
+    const db = await createTestDb();
+    const postId = await seedApprovedPost(db);
+    setXClientForTests(null);
+
+    const result = await deliverPostTeaserToX(db, {
+      postId,
+      idempotencyKey: "no-client",
+    });
+
+    expect(result.outcome).toBe("blocked");
+    if (result.outcome === "blocked") {
+      expect(result.reason).toBe("client_unconfigured");
+    }
+    expect(await countReceipts(db)).toBe(0);
+  });
+
+  it("does not send again when a new idempotency key is used after completion", async () => {
     const db = await createTestDb();
     const postId = await seedApprovedPost(db);
 
@@ -96,26 +126,138 @@ describe("deliverPostTeaserToX", () => {
     const db = await createTestDb();
     const postId = await seedApprovedPost(db);
 
-    let inFlight = 0;
-    let maxInFlight = 0;
     const postTweet = vi.fn(async () => {
-      inFlight += 1;
-      maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 25));
-      inFlight -= 1;
       return { tweetId: "tweet-concurrent" };
     });
     setXClientForTests({ postTweet });
 
     const [a, b] = await Promise.all([
-      deliverPostTeaserToX(db, { postId, idempotencyKey: "concurrent-a" }),
-      deliverPostTeaserToX(db, { postId, idempotencyKey: "concurrent-b" }),
+      deliverPostTeaserToX(db, {
+        postId,
+        idempotencyKey: "concurrent-a",
+        claimOptions: { stalePendingMs: STALE_MS },
+      }),
+      deliverPostTeaserToX(db, {
+        postId,
+        idempotencyKey: "concurrent-b",
+        claimOptions: { stalePendingMs: STALE_MS },
+      }),
     ]);
 
     const outcomes = [a.outcome, b.outcome];
     expect(outcomes.filter((o) => o === "posted")).toHaveLength(1);
     expect(outcomes.filter((o) => o === "blocked")).toHaveLength(1);
     expect(postTweet).toHaveBeenCalledTimes(1);
-    expect(maxInFlight).toBeLessThanOrEqual(1);
+  });
+
+  it("records failure then succeeds on retry with exactly one successful post", async () => {
+    const db = await createTestDb();
+    const postId = await seedApprovedPost(db);
+
+    let calls = 0;
+    const postTweet = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("X API down");
+      }
+      return { tweetId: "tweet-retry" };
+    });
+    setXClientForTests({ postTweet });
+
+    const failed = await deliverPostTeaserToX(db, {
+      postId,
+      idempotencyKey: "retry-1",
+    });
+    expect(failed.outcome).toBe("provider_failed");
+
+    const succeeded = await deliverPostTeaserToX(db, {
+      postId,
+      idempotencyKey: "retry-2",
+    });
+    expect(succeeded.outcome).toBe("posted");
+    expect(postTweet).toHaveBeenCalledTimes(2);
+
+    const [receipt] = await db
+      .select()
+      .from(deliveryReceipts)
+      .where(eq(deliveryReceipts.postId, postId));
+    expect(receipt?.status).toBe("completed");
+  });
+
+  it("allows only one provider call when concurrent retries follow a failure", async () => {
+    const db = await createTestDb();
+    const postId = await seedApprovedPost(db);
+
+    let calls = 0;
+    const postTweet = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("temporary outage");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return { tweetId: "tweet-after-retry" };
+    });
+    setXClientForTests({ postTweet });
+
+    expect(
+      (await deliverPostTeaserToX(db, { postId, idempotencyKey: "fail-once" }))
+        .outcome,
+    ).toBe("provider_failed");
+
+    const [a, b] = await Promise.all([
+      deliverPostTeaserToX(db, {
+        postId,
+        idempotencyKey: "retry-a",
+        claimOptions: { stalePendingMs: STALE_MS },
+      }),
+      deliverPostTeaserToX(db, {
+        postId,
+        idempotencyKey: "retry-b",
+        claimOptions: { stalePendingMs: STALE_MS },
+      }),
+    ]);
+
+    expect([a.outcome, b.outcome].filter((o) => o === "posted")).toHaveLength(
+      1,
+    );
+    expect(postTweet).toHaveBeenCalledTimes(2);
+  });
+
+  it("reclaims a stale pending receipt and completes delivery", async () => {
+    const db = await createTestDb();
+    const postId = await seedApprovedPost(db);
+    const staleUpdatedAt = new Date(Date.now() - STALE_MS - 10);
+
+    await db.insert(deliveryReceipts).values({
+      id: randomUUID(),
+      postId,
+      channel: "x",
+      idempotencyKey: "stale-pending",
+      status: "pending",
+      attempts: 1,
+      lastError: null,
+      updatedAt: staleUpdatedAt,
+      completedAt: staleUpdatedAt,
+    });
+
+    const postTweet = vi.fn(async () => ({ tweetId: "tweet-stale" }));
+    setXClientForTests({ postTweet });
+
+    const result = await deliverPostTeaserToX(db, {
+      postId,
+      idempotencyKey: "reclaim-stale",
+      claimOptions: { stalePendingMs: STALE_MS, now: new Date() },
+    });
+
+    expect(result.outcome).toBe("posted");
+    expect(postTweet).toHaveBeenCalledTimes(1);
+
+    const [receipt] = await db
+      .select()
+      .from(deliveryReceipts)
+      .where(eq(deliveryReceipts.postId, postId));
+    expect(receipt?.status).toBe("completed");
+    expect(receipt?.idempotencyKey).toBe("reclaim-stale");
   });
 });

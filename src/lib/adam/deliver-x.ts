@@ -1,18 +1,20 @@
 import type { DearCreativeDb } from "@/db/client";
 import { assertDeliverable } from "@/lib/approval/delivery-gate";
-import { claimDeliverySlot } from "@/lib/approval/claim-delivery-slot";
-import { recordDeliveryAudit } from "@/lib/approval/record-delivery";
+import type { ClaimDeliveryOptions } from "@/lib/approval/claim-delivery-slot";
 import { getXClient } from "@/lib/x/client";
+import { runGatedChannelDelivery } from "./run-gated-channel-delivery";
 
 export type DeliverXInput = {
   postId: string;
   idempotencyKey: string;
   dryRun?: boolean;
+  claimOptions?: ClaimDeliveryOptions;
 };
 
 export type DeliverXResult =
   | { outcome: "posted"; tweetId: string; dryRun: boolean }
-  | { outcome: "blocked"; reason: string };
+  | { outcome: "blocked"; reason: string }
+  | { outcome: "provider_failed"; errorMessage: string };
 
 export async function deliverPostTeaserToX(
   db: DearCreativeDb,
@@ -23,37 +25,42 @@ export async function deliverPostTeaserToX(
     return { outcome: "blocked", reason: gate.reason };
   }
 
-  const dryRun = Boolean(input.dryRun);
   const teaser = gate.value.post.teaserText?.trim();
   if (!teaser) {
     return { outcome: "blocked", reason: "not_found" };
   }
 
-  if (!dryRun) {
-    const claim = await claimDeliverySlot(db, {
-      postId: input.postId,
-      channel: "x",
-      idempotencyKey: input.idempotencyKey,
-    });
-    if (!claim.ok) {
-      return { outcome: "blocked", reason: claim.reason };
-    }
+  const result = await runGatedChannelDelivery({
+    db,
+    postId: input.postId,
+    channel: "x",
+    idempotencyKey: input.idempotencyKey,
+    dryRun: input.dryRun,
+    isClientConfigured: () => getXClient() !== null,
+    send: async () => {
+      const client = getXClient();
+      if (!client) {
+        throw new Error("X client is not configured");
+      }
+      return client.postTweet({ text: teaser });
+    },
+    formatSuccess: (provider) => ({
+      tweetId: provider.tweetId,
+    }),
+    claimOptions: input.claimOptions,
+  });
 
-    const x = getXClient();
-    if (!x) {
-      return { outcome: "blocked", reason: "not_approved" };
-    }
-    const result = await x.postTweet({ text: teaser });
-
-    await recordDeliveryAudit(db, {
-      postId: input.postId,
-      channel: "x",
-      idempotencyKey: input.idempotencyKey,
-      actor: "adam",
-    });
-
-    return { outcome: "posted", tweetId: result.tweetId, dryRun: false };
+  if (result.outcome === "blocked") {
+    return { outcome: "blocked", reason: result.reason };
+  }
+  if (result.outcome === "provider_failed") {
+    return {
+      outcome: "provider_failed",
+      errorMessage: result.errorMessage,
+    };
   }
 
-  return { outcome: "posted", tweetId: "dry-run", dryRun: true };
+  const tweetId =
+    typeof result.data.tweetId === "string" ? result.data.tweetId : "dry-run";
+  return { outcome: "posted", tweetId, dryRun: result.dryRun };
 }

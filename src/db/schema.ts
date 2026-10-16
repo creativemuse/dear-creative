@@ -39,6 +39,14 @@ export const approvalStatusEnum = [
 export const deliveryChannelEnum = ["publish", "x", "email"] as const;
 export type DeliveryChannel = (typeof deliveryChannelEnum)[number];
 
+export const deliveryReceiptStatusEnum = [
+  "pending",
+  "completed",
+  "failed",
+] as const;
+export type DeliveryReceiptStatus =
+  (typeof deliveryReceiptStatusEnum)[number];
+
 export const sponsors = sqliteTable("sponsors", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -150,9 +158,15 @@ export const deliveryReceipts = sqliteTable(
       .references(() => posts.id),
     channel: text("channel", { enum: deliveryChannelEnum }).notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
-    completedAt: integer("completed_at", { mode: "timestamp_ms" })
+    status: text("status", { enum: deliveryReceiptStatusEnum })
+      .notNull()
+      .default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
   },
   (table) => [
     uniqueIndex("delivery_receipts_idempotency_unique").on(
