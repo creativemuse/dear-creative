@@ -3,20 +3,15 @@ import { getDb } from "@/db/client";
 import { isValidEmail, normalizeEmail } from "@/lib/email/validate";
 import { checkRateLimit } from "@/lib/rate-limit/memory";
 import { getResendClient, getResendFromAddress } from "@/lib/resend/client";
+import { getRequiredPublicSiteUrl } from "@/lib/site/public-origin";
 import { requestSubscription } from "@/lib/subscribers/subscribe";
+import { SUBSCRIBE_HTTP_ACK } from "@/lib/subscribers/subscribe-response";
 
 function getClientIp(request: Request): string {
   return (
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     request.headers.get("x-real-ip") ??
     "unknown"
-  );
-}
-
-function getSiteOrigin(request: Request): string {
-  return (
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
-    new URL(request.url).origin
   );
 }
 
@@ -58,13 +53,21 @@ export async function POST(request: Request) {
     );
   }
 
-  const summary = await requestSubscription(email, {
+  const siteOrigin = getRequiredPublicSiteUrl();
+  if (!siteOrigin) {
+    return NextResponse.json(
+      { error: "Subscription is not configured" },
+      { status: 503 },
+    );
+  }
+
+  await requestSubscription(email, {
     db: getDb(),
     resend: getResendClient(),
     tokenSecret,
-    siteOrigin: getSiteOrigin(request),
+    siteOrigin,
     resendFrom: getResendFromAddress() ?? "newsletter@example.test",
   });
 
-  return NextResponse.json({ outcome: summary.outcome });
+  return NextResponse.json(SUBSCRIBE_HTTP_ACK);
 }
