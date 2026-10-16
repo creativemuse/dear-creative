@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getDb } from "@/db/client";
+import { listApprovalQueue } from "@/lib/approval/list-queue";
 import { requirePrivyAuth } from "@/lib/privy/require-auth";
 
 export async function GET(request: Request) {
@@ -7,8 +9,9 @@ export async function GET(request: Request) {
     return auth.response;
   }
 
+  const approvals = await listApprovalQueue(getDb());
   return NextResponse.json({
-    approvals: [],
+    approvals,
     requestedBy: auth.user.userId,
   });
 }
