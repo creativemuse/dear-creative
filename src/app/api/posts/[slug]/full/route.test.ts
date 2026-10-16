@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setPaymentsEnabledForTests } from "@/lib/payments/feature-flag";
 import {
   resetX402PaymentVerifierForTests,
