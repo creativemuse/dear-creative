@@ -11,6 +11,6 @@ export async function GET(request: Request) {
   const allowlist = getPrivyAdminUserIds();
   return NextResponse.json({
     userId: auth.user.userId,
-    isAdmin: allowlist.size === 0 || allowlist.has(auth.user.userId),
+    isAdmin: allowlist.has(auth.user.userId),
   });
 }
