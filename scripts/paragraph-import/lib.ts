@@ -9,7 +9,10 @@ export type ImportSummary = {
   dedupedRows: number;
   invalidRows: number;
   inserted: number;
-  updated: number;
+  /** Existing row left unchanged (subscribed, unsubscribed, or bounced). */
+  existing: number;
+  /** pending → subscribed only. */
+  promoted: number;
   skippedInvalid: string[];
 };
 
@@ -112,7 +115,8 @@ export async function importParagraphSubscribers(
     dedupedRows: 0,
     invalidRows: 0,
     inserted: 0,
-    updated: 0,
+    existing: 0,
+    promoted: 0,
     skippedInvalid: [],
   };
 
@@ -138,21 +142,28 @@ export async function importParagraphSubscribers(
     seen.add(normalized);
 
     const existing = await db
-      .select({ id: subscribers.id })
+      .select({
+        id: subscribers.id,
+        status: subscribers.status,
+      })
       .from(subscribers)
       .where(eq(subscribers.email, normalized))
       .limit(1);
 
     if (existing.length > 0) {
-      await db
-        .update(subscribers)
-        .set({
-          status: "subscribed",
-          source: "paragraph_import",
-          subscribedAt: new Date(),
-        })
-        .where(eq(subscribers.email, normalized));
-      summary.updated += 1;
+      const row = existing[0];
+      if (row?.status === "pending") {
+        await db
+          .update(subscribers)
+          .set({
+            status: "subscribed",
+            subscribedAt: new Date(),
+          })
+          .where(eq(subscribers.email, normalized));
+        summary.promoted += 1;
+      } else {
+        summary.existing += 1;
+      }
     } else {
       await db.insert(subscribers).values({
         id: randomUUID(),
