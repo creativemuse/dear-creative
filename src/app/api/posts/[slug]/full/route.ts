@@ -54,21 +54,26 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
-    const db = getDb();
-    const postId = await findPostIdBySlug(db, slug);
-    if (postId) {
-      const alreadyUnlocked = await hasUnlockForWallet(db, {
-        postId,
-        walletAddress: verification.walletAddress,
-      });
-      if (!alreadyUnlocked) {
-        await recordX402Unlock(db, {
+    const hasDatabaseConfig =
+      Boolean(process.env.TURSO_DATABASE_URL?.trim()) ||
+      Boolean(process.env.LOCAL_DATABASE_URL?.trim());
+    if (hasDatabaseConfig) {
+      const db = getDb();
+      const postId = await findPostIdBySlug(db, slug);
+      if (postId) {
+        const alreadyUnlocked = await hasUnlockForWallet(db, {
           postId,
           walletAddress: verification.walletAddress,
-          txHash: verification.txHash,
-          chainId: X402_BASE_SEPOLIA_CHAIN_ID,
-          amountRaw: verification.amountRaw,
         });
+        if (!alreadyUnlocked) {
+          await recordX402Unlock(db, {
+            postId,
+            walletAddress: verification.walletAddress,
+            txHash: verification.txHash,
+            chainId: X402_BASE_SEPOLIA_CHAIN_ID,
+            amountRaw: verification.amountRaw,
+          });
+        }
       }
     }
 
