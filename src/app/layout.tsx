@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AppProviders } from "@/components/providers/app-providers";
 import { SiteFooter } from "@/components/site-footer";
+import { getPrivyAppId } from "@/lib/privy/config";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -23,13 +25,17 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const privyAppId = getPrivyAppId();
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-        <div className="flex-1">{children}</div>
+        <AppProviders privyAppId={privyAppId}>
+          <div className="flex-1">{children}</div>
+        </AppProviders>
         <SiteFooter />
       </body>
     </html>
