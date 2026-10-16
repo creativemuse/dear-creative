@@ -27,8 +27,24 @@ describe("GET /api/posts/[slug]/full", () => {
     expect(response.status).toBe(501);
   });
 
+  it("returns 503 when NEXT_PUBLIC_SITE_URL is missing (fail closed)", async () => {
+    setPaymentsEnabledForTests(true);
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    vi.stubEnv("X402_PAY_TO_ADDRESS", "0x0000000000000000000000000000000000000001");
+    vi.stubEnv("X402_MAX_AMOUNT_REQUIRED", "stub-amount");
+
+    const response = await GET(
+      new Request("http://evil.example/api/posts/hello-dear-creative/full", {
+        headers: { Host: "evil.example" },
+      }),
+      { params: Promise.resolve({ slug: "hello-dear-creative" }) },
+    );
+    expect(response.status).toBe(503);
+  });
+
   it("returns 402 x402 requirements for agents when payments are enabled", async () => {
     setPaymentsEnabledForTests(true);
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://news.example.com");
     vi.stubEnv("X402_PAY_TO_ADDRESS", "0x0000000000000000000000000000000000000001");
     vi.stubEnv("X402_MAX_AMOUNT_REQUIRED", "stub-amount");
 
@@ -37,16 +53,21 @@ describe("GET /api/posts/[slug]/full", () => {
       { params: Promise.resolve({ slug: "hello-dear-creative" }) },
     );
     expect(response.status).toBe(402);
-    const body = (await response.json()) as { x402Version: number; accepts: unknown[] };
+    const body = (await response.json()) as {
+      x402Version: number;
+      accepts: Array<{ resource: string }>;
+    };
     expect(body.x402Version).toBe(1);
     expect(body.accepts[0]).toMatchObject({
       scheme: "exact",
       network: "base-sepolia",
+      resource: "https://news.example.com/api/posts/hello-dear-creative/full",
     });
   });
 
   it("returns full post content when x402 payment header verifies", async () => {
     setPaymentsEnabledForTests(true);
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://news.example.com");
     vi.stubEnv("X402_PAY_TO_ADDRESS", "0x0000000000000000000000000000000000000001");
     vi.stubEnv("X402_MAX_AMOUNT_REQUIRED", "stub-amount");
     setX402PaymentVerifierForTests({

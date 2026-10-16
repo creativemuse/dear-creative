@@ -8,12 +8,12 @@ import {
   X402_BASE_SEPOLIA_CHAIN_ID,
 } from "@/lib/payments/x402-agent";
 import { loadFullPostContent } from "@/lib/paywall/full-post-content";
+import { buildPaywallResourceUrl } from "@/lib/paywall/resource-url";
 import {
   findPostIdBySlug,
   hasUnlockForWallet,
   recordX402Unlock,
 } from "@/lib/paywall/unlock-access";
-import { getRequiredPublicSiteUrl } from "@/lib/site/public-origin";
 
 type RouteContext = {
   params: Promise<{ slug: string }>;
@@ -37,9 +37,14 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
 
-  const origin =
-    getRequiredPublicSiteUrl() ?? new URL(request.url).origin;
-  const resourceUrl = `${origin}/api/posts/${slug}/full`;
+  const resourceUrl = buildPaywallResourceUrl(slug);
+  if (!resourceUrl) {
+    return NextResponse.json(
+      { error: "Public site URL is not configured" },
+      { status: 503 },
+    );
+  }
+
   const payment = paymentHeader(request);
 
   if (payment) {
