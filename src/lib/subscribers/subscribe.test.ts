@@ -9,7 +9,10 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as schema from "@/db/schema";
 import { subscribers } from "@/db/schema";
-import { resetResendClientForTests } from "@/lib/resend/client";
+import {
+  resetResendClientForTests,
+  type ResendSendPayload,
+} from "@/lib/resend/client";
 import {
   confirmSubscription,
   requestSubscription,
@@ -33,7 +36,7 @@ describe("requestSubscription", () => {
 
   it("creates pending and sends confirmation", async () => {
     const db = await createTestDb();
-    const send = vi.fn(async () => ({ id: "1" }));
+    const send = vi.fn(async (_payload: ResendSendPayload) => ({ id: "1" }));
 
     const summary = await requestSubscription("new@example.test", {
       db,
@@ -50,14 +53,14 @@ describe("requestSubscription", () => {
       .where(eq(subscribers.email, "new@example.test"));
     expect(row?.status).toBe("pending");
     expect(send).toHaveBeenCalledOnce();
-    const html = send.mock.calls[0]?.[0]?.html as string;
-    expect(html).toContain("https://dear.example.test/api/subscribe/confirm");
-    expect(html).not.toContain("localhost:3010");
+    const sent = send.mock.calls[0]![0];
+    expect(sent.html).toContain("https://dear.example.test/api/subscribe/confirm");
+    expect(sent.html).not.toContain("localhost:3010");
   });
 
   it("uses configured public site URL in confirm links only", async () => {
     const db = await createTestDb();
-    const send = vi.fn(async () => ({ id: "1" }));
+    const send = vi.fn(async (_payload: ResendSendPayload) => ({ id: "1" }));
 
     await requestSubscription("link@example.test", {
       db,
@@ -67,7 +70,7 @@ describe("requestSubscription", () => {
       resendFrom: "news@example.test",
     });
 
-    const html = send.mock.calls[0]?.[0]?.html as string;
+    const html = send.mock.calls[0]![0].html;
     expect(html).toMatch(
       /^[\s\S]*https:\/\/news\.dear\.example\.test\/api\/subscribe\/confirm\?token=[\s\S]*$/,
     );
