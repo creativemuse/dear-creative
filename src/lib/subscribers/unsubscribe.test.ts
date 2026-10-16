@@ -53,6 +53,24 @@ describe("unsubscribeByEmail", () => {
     const db = await createTestDb();
     expect(await unsubscribeByEmail("missing@example.test", db)).toBe("not_found");
   });
+
+  it("does not change bounced rows", async () => {
+    const db = await createTestDb();
+    await db.insert(subscribers).values({
+      id: randomUUID(),
+      email: "bounced@example.test",
+      status: "bounced",
+      source: "resend_webhook",
+    });
+
+    expect(await unsubscribeByEmail("bounced@example.test", db)).toBe("bounced");
+    const [row] = await db
+      .select()
+      .from(subscribers)
+      .where(eq(subscribers.email, "bounced@example.test"));
+    expect(row?.status).toBe("bounced");
+    expect(row?.unsubscribedAt).toBeNull();
+  });
 });
 
 describe("unsubscribe tokens", () => {

@@ -3,7 +3,11 @@ import type { DearCreativeDb } from "@/db/client";
 import { subscribers } from "@/db/schema";
 import { normalizeEmail } from "@/lib/email/validate";
 
-export type UnsubscribeOutcome = "unsubscribed" | "already_unsubscribed" | "not_found";
+export type UnsubscribeOutcome =
+  | "unsubscribed"
+  | "already_unsubscribed"
+  | "not_found"
+  | "bounced";
 
 export async function unsubscribeByEmail(
   rawEmail: string,
@@ -18,6 +22,9 @@ export async function unsubscribeByEmail(
   const row = existing[0];
   if (!row) {
     return "not_found";
+  }
+  if (row.status === "bounced") {
+    return "bounced";
   }
   if (row.status === "unsubscribed") {
     return "already_unsubscribed";
