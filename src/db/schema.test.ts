@@ -1,0 +1,26 @@
+import { describe, expect, it } from "vitest";
+import {
+  approvalStatusEnum,
+  deliveryChannelEnum,
+  payMethodEnum,
+  postStatusEnum,
+} from "./schema";
+
+describe("schema enums", () => {
+  it("includes draft posts for Adam publishToTurso", () => {
+    expect(postStatusEnum).toContain("draft");
+  });
+
+  it("includes paywall pay methods from spec v2", () => {
+    expect(payMethodEnum).toEqual([
+      "x402_usdc",
+      "crtvai_metoken",
+      "unlock_member",
+    ]);
+  });
+
+  it("includes approval and delivery channels", () => {
+    expect(approvalStatusEnum).toContain("approved");
+    expect(deliveryChannelEnum).toEqual(["publish", "x", "email"]);
+  });
+});
