@@ -37,6 +37,7 @@ export const approvalStatusEnum = [
 ] as const;
 
 export const deliveryChannelEnum = ["publish", "x", "email"] as const;
+export type DeliveryChannel = (typeof deliveryChannelEnum)[number];
 
 export const sponsors = sqliteTable("sponsors", {
   id: text("id").primaryKey(),
@@ -157,7 +158,10 @@ export const deliveryReceipts = sqliteTable(
     uniqueIndex("delivery_receipts_idempotency_unique").on(
       table.idempotencyKey,
     ),
-    index("delivery_receipts_post_channel_idx").on(table.postId, table.channel),
+    uniqueIndex("delivery_receipts_post_channel_unique").on(
+      table.postId,
+      table.channel,
+    ),
   ],
 );
 

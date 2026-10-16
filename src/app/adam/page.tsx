@@ -14,6 +14,13 @@ export default function AdamPage() {
         <li>
           <code>POST /api/adam/posts/publish</code> — publishToTurso (draft only)
         </li>
+        <li>
+          <code>POST /api/adam/deliver/x</code> — postTeaserToX (approval gate)
+        </li>
+        <li>
+          <code>POST /api/adam/deliver/email</code> — sendNewsletterEmail (approval
+          gate)
+        </li>
       </ul>
     </main>
   );
