@@ -12,6 +12,7 @@ import {
   CHUNK_AUTO_RETRY_MAX_AGE_MS,
   NEWSLETTER_CHUNK_SIZE,
 } from "./newsletter-chunk-constants";
+import { systemClock, type Clock } from "@/lib/time/clock";
 import { subscriberIdsSendHash } from "./subscriber-id-set-hash";
 
 export type FrozenSubscriber = {
@@ -169,7 +170,7 @@ export type ClaimChunkForSendResult =
 export async function claimChunkForSend(
   db: DearCreativeDb,
   input: { receiptId: string; chunkIndex: number },
-  now = new Date(),
+  clock: Clock = systemClock,
 ): Promise<ClaimChunkForSendResult> {
   const rows = await db
     .select()
@@ -193,27 +194,30 @@ export async function claimChunkForSend(
     };
   }
 
+  const retryCheckNow = clock();
   if (
     (chunk.status === "failed" || chunk.status === "pending") &&
-    isChunkRetryStale(chunk.lastAttemptAt, now)
+    isChunkRetryStale(chunk.lastAttemptAt, retryCheckNow)
   ) {
+    const reviewNow = clock();
     await markChunkNeedsReview(
       db,
       chunk.id,
       "Chunk last attempt is older than 23 hours; admin review required before retry",
-      now,
+      reviewNow,
     );
     await markReceiptNeedsReview(
       db,
       input.receiptId,
       "Newsletter chunk requires admin review (stale retry window)",
-      now,
+      reviewNow,
     );
     return { ok: false, reason: "needs_review" };
   }
 
+  const claimNow = clock();
   const staleBefore = new Date(
-    now.getTime() - DEFAULT_DELIVERY_PENDING_STALE_MS,
+    claimNow.getTime() - DEFAULT_DELIVERY_PENDING_STALE_MS,
   );
 
   const claimed = await db
@@ -221,9 +225,9 @@ export async function claimChunkForSend(
     .set({
       status: "pending",
       attempts: chunk.attempts + 1,
-      lastAttemptAt: now,
+      lastAttemptAt: claimNow,
       lastError: null,
-      updatedAt: now,
+      updatedAt: claimNow,
     })
     .where(
       and(

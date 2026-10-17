@@ -30,6 +30,7 @@ import {
   resetResendBroadcastClientForTests,
 } from "@/lib/resend/broadcast";
 import { resendIdempotencyKeyForChunk } from "@/lib/resend/idempotency";
+import * as newsletterChunks from "./newsletter-chunks";
 import {
   hashFrozenChunkRecipientIds,
   parseSubscriberIdsJson,
@@ -286,7 +287,7 @@ describe("sendNewsletterEmail", () => {
     await sendNewsletterEmail(db, {
       postId,
       idempotencyKey: "post:stale",
-      now: staleNow,
+      clock: () => staleNow,
     });
 
     const [receipt] = await db
@@ -319,7 +320,7 @@ describe("sendNewsletterEmail", () => {
     const review = await sendNewsletterEmail(db, {
       postId,
       idempotencyKey: "post:stale-retry",
-      now: new Date("2026-01-02T12:00:00.000Z"),
+      clock: () => new Date("2026-01-02T12:00:00.000Z"),
     });
 
     expect(review.outcome).toBe("needs_review");
@@ -610,7 +611,7 @@ describe("sendNewsletterEmail", () => {
     const review = await sendNewsletterEmail(db, {
       postId,
       idempotencyKey: "post:stale-pending-retry",
-      now,
+      clock: () => now,
     });
 
     expect(review.outcome).toBe("needs_review");
@@ -660,7 +661,7 @@ describe("sendNewsletterEmail", () => {
     const result = await sendNewsletterEmail(db, {
       postId,
       idempotencyKey: "post:stale-pending-reclaim",
-      now,
+      clock: () => now,
     });
 
     expect(result.outcome).toBe("sent");
@@ -703,40 +704,65 @@ describe("sendNewsletterEmail", () => {
     expect(batchSend).toHaveBeenCalledTimes(1);
   });
 
-  it("bumps receipt updated_at after each chunk in a multi-chunk send", async () => {
+  it("uses a fresh clock reading so chunk and receipt timestamps strictly increase", async () => {
     process.env.RESEND_LIVE = "true";
     const db = await createTestDb();
     const postId = await seedApprovedNewsletterPost(db, {
       subscriberCount: 250,
     });
 
-    const receiptUpdatedAtMs: number[] = [];
-    batchSend.mockImplementation(async () => {
-      const [receipt] = await db
-        .select()
-        .from(deliveryReceipts)
-        .where(eq(deliveryReceipts.postId, postId));
-      receiptUpdatedAtMs.push(receipt!.updatedAt.getTime());
-      return {
-        data: { data: [{ id: "chunk-sent" }] },
-        error: null,
-      };
+    let ms = Date.parse("2026-06-01T00:00:00.000Z");
+    const clock = () => new Date((ms += 60_000));
+
+    const receiptTouchMs: number[] = [];
+    const touchSpy = vi
+      .spyOn(newsletterChunks, "touchDeliveryReceiptActivity")
+      .mockImplementation(async (touchDb, receiptId, now = new Date()) => {
+        receiptTouchMs.push(now.getTime());
+        await touchDb
+          .update(deliveryReceipts)
+          .set({ updatedAt: now })
+          .where(eq(deliveryReceipts.id, receiptId));
+      });
+
+    batchSend.mockResolvedValue({
+      data: { data: [{ id: "chunk-sent" }] },
+      error: null,
     });
 
-    const result = await sendNewsletterEmail(db, {
-      postId,
-      idempotencyKey: "post:receipt-freshness",
-    });
+    let result: Awaited<ReturnType<typeof sendNewsletterEmail>>;
+    try {
+      result = await sendNewsletterEmail(db, {
+        postId,
+        idempotencyKey: "post:receipt-freshness",
+        clock,
+      });
+    } finally {
+      touchSpy.mockRestore();
+    }
 
-    expect(result.outcome).toBe("sent");
+    expect(result!.outcome).toBe("sent");
     expect(batchSend).toHaveBeenCalledTimes(3);
-    expect(receiptUpdatedAtMs).toHaveLength(3);
-    expect(receiptUpdatedAtMs[1]).toBeGreaterThanOrEqual(
-      receiptUpdatedAtMs[0]!,
-    );
-    expect(receiptUpdatedAtMs[2]).toBeGreaterThanOrEqual(
-      receiptUpdatedAtMs[1]!,
-    );
+
+    const [receipt] = await db
+      .select()
+      .from(deliveryReceipts)
+      .where(eq(deliveryReceipts.postId, postId));
+    const chunkRows = await db
+      .select()
+      .from(deliveryReceiptChunks)
+      .where(eq(deliveryReceiptChunks.receiptId, receipt!.id))
+      .orderBy(deliveryReceiptChunks.chunkIndex);
+    const lastAttemptMs = chunkRows.map((row) => row.lastAttemptAt!.getTime());
+    const chunkUpdatedMs = chunkRows.map((row) => row.updatedAt.getTime());
+    expect(lastAttemptMs[1]).toBeGreaterThan(lastAttemptMs[0]!);
+    expect(lastAttemptMs[2]).toBeGreaterThan(lastAttemptMs[1]!);
+    expect(chunkUpdatedMs[1]).toBeGreaterThan(chunkUpdatedMs[0]!);
+    expect(chunkUpdatedMs[2]).toBeGreaterThan(chunkUpdatedMs[1]!);
+    expect(receiptTouchMs).toHaveLength(3);
+    expect(receiptTouchMs[1]).toBeGreaterThan(receiptTouchMs[0]!);
+    expect(receiptTouchMs[2]).toBeGreaterThan(receiptTouchMs[1]!);
+    expect(receipt!.updatedAt.getTime()).toBeGreaterThan(receiptTouchMs[2]!);
   });
 
   it("aborts the provider call when the timeout elapses", async () => {

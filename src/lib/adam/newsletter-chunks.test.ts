@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import * as schema from "@/db/schema";
 import { deliveryReceiptChunks, deliveryReceipts, posts } from "@/db/schema";
 import { DEFAULT_DELIVERY_PENDING_STALE_MS } from "@/lib/approval/delivery-receipt-constants";
+import type { Clock } from "@/lib/time/clock";
 import { NEWSLETTER_CHUNK_SIZE } from "./newsletter-chunk-constants";
 import {
   chunkSubscriberIds,
@@ -102,6 +103,43 @@ describe("claimChunkForSend", () => {
       expect(wins[0].chunk.attempts).toBe(2);
       expect(wins[0].chunk.status).toBe("pending");
     }
+  });
+
+  it("refuses reclaim within 5 minutes of a late claim but allows it after", async () => {
+    const db = await createTestDb();
+    const baseMs = Date.parse("2026-04-01T00:00:00.000Z");
+    let ms = baseMs;
+    const clock: Clock = () => new Date(ms);
+
+    const { receiptId } = await seedReclaimableChunk(db, {
+      status: "pending",
+      attempts: 0,
+      lastAttemptAt: null,
+    });
+
+    ms = baseMs + 20 * 60_000;
+    const first = await claimChunkForSend(
+      db,
+      { receiptId, chunkIndex: 0 },
+      clock,
+    );
+    expect(first.ok).toBe(true);
+
+    ms = baseMs + 22 * 60_000;
+    const tooSoon = await claimChunkForSend(
+      db,
+      { receiptId, chunkIndex: 0 },
+      clock,
+    );
+    expect(tooSoon.ok).toBe(false);
+
+    ms = baseMs + 26 * 60_000;
+    const afterWindow = await claimChunkForSend(
+      db,
+      { receiptId, chunkIndex: 0 },
+      clock,
+    );
+    expect(afterWindow.ok).toBe(true);
   });
 
   it("refuses a second claim inside the 5-minute in-progress window", async () => {

@@ -18,6 +18,7 @@ import {
   isResendLiveEnabled,
 } from "@/lib/resend/broadcast";
 import { getRequiredPublicSiteUrl } from "@/lib/site/public-origin";
+import { systemClock, type Clock } from "@/lib/time/clock";
 import {
   allChunksCompleted,
   claimChunkForSend,
@@ -39,8 +40,8 @@ export type DeliverEmailInput = {
   dryRun?: boolean;
   claimOptions?: ClaimDeliveryOptions;
   providerTimeoutMs?: number;
-  /** Test hook for simulating time without waiting 23h. */
-  now?: Date;
+  /** Injectable clock; a fresh reading is taken per chunk operation. */
+  clock?: Clock;
 };
 
 export type DeliverEmailResult =
@@ -81,14 +82,13 @@ async function sendNewsletterChunks(
     subject: string;
     html: string;
     providerTimeoutMs?: number;
-    now?: Date;
+    clock: Clock;
   },
 ): Promise<
   | { ok: true; broadcastId: string }
   | { ok: false; kind: "provider_failed"; message: string }
   | { ok: false; kind: "needs_review"; message: string }
 > {
-  const now = input.now ?? new Date();
   const client = getResendBroadcastClient();
   if (!client) {
     throw new Error("Resend broadcast client is not configured");
@@ -104,7 +104,12 @@ async function sendNewsletterChunks(
   }
 
   const subscribed = await listSubscribedSubscribersForFreeze(db);
-  const chunks = await freezeRecipientChunks(db, input.receiptId, subscribed, now);
+  const chunks = await freezeRecipientChunks(
+    db,
+    input.receiptId,
+    subscribed,
+    input.clock(),
+  );
   if (chunks.length === 0) {
     throw new Error("No newsletter recipients");
   }
@@ -120,7 +125,7 @@ async function sendNewsletterChunks(
         db,
         input.receiptId,
         "Newsletter delivery has chunks awaiting admin review",
-        now,
+        input.clock(),
       );
       return {
         ok: false,
@@ -132,7 +137,7 @@ async function sendNewsletterChunks(
     const claim = await claimChunkForSend(
       db,
       { receiptId: input.receiptId, chunkIndex: chunkRow.chunkIndex },
-      now,
+      input.clock,
     );
     if (!claim.ok) {
       if (claim.reason === "needs_review") {
@@ -159,9 +164,9 @@ async function sendNewsletterChunks(
         db,
         claim.chunk.id,
         { subscriberIds: sendableIds, hash: recipientSetHash },
-        now,
+        input.clock(),
       );
-      await touchDeliveryReceiptActivity(db, input.receiptId, now);
+      await touchDeliveryReceiptActivity(db, input.receiptId, input.clock());
       continue;
     }
 
@@ -198,21 +203,25 @@ async function sendNewsletterChunks(
         db,
         claim.chunk.id,
         { subscriberIds: sendableIds, hash: recipientSetHash },
-        now,
+        input.clock(),
       );
       if (!firstBroadcastId) {
         firstBroadcastId = providerResult.broadcastId;
       }
-      await touchDeliveryReceiptActivity(db, input.receiptId, now);
+      await touchDeliveryReceiptActivity(db, input.receiptId, input.clock());
     } catch (error) {
       const message = formatProviderFailureMessage(error);
-      await markChunkFailed(db, claim.chunk.id, message, now);
-      await touchDeliveryReceiptActivity(db, input.receiptId, now);
-      await markDeliveryFailed(db, {
-        postId: input.postId,
-        channel: "email",
-        errorMessage: message,
-      });
+      await markChunkFailed(db, claim.chunk.id, message, input.clock());
+      await touchDeliveryReceiptActivity(db, input.receiptId, input.clock());
+      await markDeliveryFailed(
+        db,
+        {
+          postId: input.postId,
+          channel: "email",
+          errorMessage: message,
+        },
+        input.clock(),
+      );
       return { ok: false, kind: "provider_failed", message };
     }
   }
@@ -260,6 +269,8 @@ export async function sendNewsletterEmail(
     return { outcome: "blocked", reason: "client_unconfigured" };
   }
 
+  const clock = input.clock ?? systemClock;
+
   const claim = await claimDeliverySlot(
     db,
     {
@@ -267,7 +278,10 @@ export async function sendNewsletterEmail(
       channel: "email",
       idempotencyKey: input.idempotencyKey,
     },
-    input.claimOptions,
+    {
+      ...input.claimOptions,
+      now: input.claimOptions?.now ?? clock(),
+    },
   );
   if (!claim.ok) {
     if (claim.reason === "needs_review") {
@@ -285,7 +299,7 @@ export async function sendNewsletterEmail(
     subject,
     html,
     providerTimeoutMs: input.providerTimeoutMs,
-    now: input.now,
+    clock,
   });
 
   if (chunkResult.ok === false) {
@@ -298,10 +312,14 @@ export async function sendNewsletterEmail(
     };
   }
 
-  await markDeliveryCompleted(db, {
-    postId: input.postId,
-    channel: "email",
-  });
+  await markDeliveryCompleted(
+    db,
+    {
+      postId: input.postId,
+      channel: "email",
+    },
+    clock(),
+  );
   await recordDeliveryAudit(db, {
     postId: input.postId,
     channel: "email",
