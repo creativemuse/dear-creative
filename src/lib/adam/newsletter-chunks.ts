@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
 import {
   deliveryReceiptChunks,
@@ -212,18 +212,14 @@ export async function claimChunkForSend(
     return { ok: false, reason: "needs_review" };
   }
 
-  if (
-    chunk.status === "pending" &&
-    chunk.lastAttemptAt &&
-    now.getTime() - chunk.lastAttemptAt.getTime() <=
-      DEFAULT_DELIVERY_PENDING_STALE_MS
-  ) {
-    return { ok: false, reason: "not_claimable" };
-  }
+  const staleBefore = new Date(
+    now.getTime() - DEFAULT_DELIVERY_PENDING_STALE_MS,
+  );
 
   const claimed = await db
     .update(deliveryReceiptChunks)
     .set({
+      status: "pending",
       attempts: chunk.attempts + 1,
       lastAttemptAt: now,
       lastError: null,
@@ -232,7 +228,17 @@ export async function claimChunkForSend(
     .where(
       and(
         eq(deliveryReceiptChunks.id, chunk.id),
-        inArray(deliveryReceiptChunks.status, ["pending", "failed"]),
+        eq(deliveryReceiptChunks.attempts, chunk.attempts),
+        or(
+          eq(deliveryReceiptChunks.status, "failed"),
+          and(
+            eq(deliveryReceiptChunks.status, "pending"),
+            or(
+              isNull(deliveryReceiptChunks.lastAttemptAt),
+              lt(deliveryReceiptChunks.lastAttemptAt, staleBefore),
+            ),
+          ),
+        ),
       ),
     )
     .returning();
@@ -242,6 +248,17 @@ export async function claimChunkForSend(
   }
 
   return { ok: true, chunk: claimed[0]! };
+}
+
+export async function touchDeliveryReceiptActivity(
+  db: DearCreativeDb,
+  receiptId: string,
+  now = new Date(),
+): Promise<void> {
+  await db
+    .update(deliveryReceipts)
+    .set({ updatedAt: now })
+    .where(eq(deliveryReceipts.id, receiptId));
 }
 
 export async function markChunkCompleted(

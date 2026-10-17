@@ -667,6 +667,78 @@ describe("sendNewsletterEmail", () => {
     expect(batchSend).toHaveBeenCalledTimes(1);
   });
 
+  it("runs exactly one SDK send when two deliveries race on the same post", async () => {
+    process.env.RESEND_LIVE = "true";
+    batchSend.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                data: { data: [{ id: "race-win" }] },
+                error: null,
+              }),
+            40,
+          );
+        }),
+    );
+
+    const db = await createTestDb();
+    const postId = await seedApprovedNewsletterPost(db);
+
+    const [first, second] = await Promise.all([
+      sendNewsletterEmail(db, {
+        postId,
+        idempotencyKey: "post:race-a",
+      }),
+      sendNewsletterEmail(db, {
+        postId,
+        idempotencyKey: "post:race-b",
+      }),
+    ]);
+
+    const outcomes = [first.outcome, second.outcome];
+    expect(outcomes.filter((o) => o === "sent")).toHaveLength(1);
+    expect(outcomes.filter((o) => o === "blocked")).toHaveLength(1);
+    expect(batchSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("bumps receipt updated_at after each chunk in a multi-chunk send", async () => {
+    process.env.RESEND_LIVE = "true";
+    const db = await createTestDb();
+    const postId = await seedApprovedNewsletterPost(db, {
+      subscriberCount: 250,
+    });
+
+    const receiptUpdatedAtMs: number[] = [];
+    batchSend.mockImplementation(async () => {
+      const [receipt] = await db
+        .select()
+        .from(deliveryReceipts)
+        .where(eq(deliveryReceipts.postId, postId));
+      receiptUpdatedAtMs.push(receipt!.updatedAt.getTime());
+      return {
+        data: { data: [{ id: "chunk-sent" }] },
+        error: null,
+      };
+    });
+
+    const result = await sendNewsletterEmail(db, {
+      postId,
+      idempotencyKey: "post:receipt-freshness",
+    });
+
+    expect(result.outcome).toBe("sent");
+    expect(batchSend).toHaveBeenCalledTimes(3);
+    expect(receiptUpdatedAtMs).toHaveLength(3);
+    expect(receiptUpdatedAtMs[1]).toBeGreaterThanOrEqual(
+      receiptUpdatedAtMs[0]!,
+    );
+    expect(receiptUpdatedAtMs[2]).toBeGreaterThanOrEqual(
+      receiptUpdatedAtMs[1]!,
+    );
+  });
+
   it("aborts the provider call when the timeout elapses", async () => {
     process.env.RESEND_LIVE = "true";
     batchSend.mockImplementation(

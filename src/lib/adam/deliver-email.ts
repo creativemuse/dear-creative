@@ -30,6 +30,7 @@ import {
   parseSubscriberIdsJson,
   receiptHasNeedsReviewChunk,
   resolveFrozenChunkRecipients,
+  touchDeliveryReceiptActivity,
 } from "./newsletter-chunks";
 
 export type DeliverEmailInput = {
@@ -160,6 +161,7 @@ async function sendNewsletterChunks(
         { subscriberIds: sendableIds, hash: recipientSetHash },
         now,
       );
+      await touchDeliveryReceiptActivity(db, input.receiptId, now);
       continue;
     }
 
@@ -201,9 +203,11 @@ async function sendNewsletterChunks(
       if (!firstBroadcastId) {
         firstBroadcastId = providerResult.broadcastId;
       }
+      await touchDeliveryReceiptActivity(db, input.receiptId, now);
     } catch (error) {
       const message = formatProviderFailureMessage(error);
       await markChunkFailed(db, claim.chunk.id, message, now);
+      await touchDeliveryReceiptActivity(db, input.receiptId, now);
       await markDeliveryFailed(db, {
         postId: input.postId,
         channel: "email",
