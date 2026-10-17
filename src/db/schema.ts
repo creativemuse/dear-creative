@@ -43,9 +43,19 @@ export const deliveryReceiptStatusEnum = [
   "pending",
   "completed",
   "failed",
+  "needs_review",
 ] as const;
 export type DeliveryReceiptStatus =
   (typeof deliveryReceiptStatusEnum)[number];
+
+export const deliveryReceiptChunkStatusEnum = [
+  "pending",
+  "completed",
+  "failed",
+  "needs_review",
+] as const;
+export type DeliveryReceiptChunkStatus =
+  (typeof deliveryReceiptChunkStatusEnum)[number];
 
 export const sponsors = sqliteTable("sponsors", {
   id: text("id").primaryKey(),
@@ -176,6 +186,39 @@ export const deliveryReceipts = sqliteTable(
       table.postId,
       table.channel,
     ),
+  ],
+);
+
+export const deliveryReceiptChunks = sqliteTable(
+  "delivery_receipt_chunks",
+  {
+    id: text("id").primaryKey(),
+    receiptId: text("receipt_id")
+      .notNull()
+      .references(() => deliveryReceipts.id),
+    chunkIndex: integer("chunk_index").notNull(),
+    subscriberIdsJson: text("subscriber_ids_json").notNull(),
+    status: text("status", { enum: deliveryReceiptChunkStatusEnum })
+      .notNull()
+      .default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    lastAttemptAt: integer("last_attempt_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    sentSubscriberIdsHash: text("sent_subscriber_ids_hash"),
+    lastSentSubscriberIdsJson: text("last_sent_subscriber_ids_json"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    uniqueIndex("delivery_receipt_chunks_receipt_chunk_unique").on(
+      table.receiptId,
+      table.chunkIndex,
+    ),
+    index("delivery_receipt_chunks_receipt_id_idx").on(table.receiptId),
   ],
 );
 

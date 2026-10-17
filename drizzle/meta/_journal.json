@@ -29,6 +29,20 @@
       "when": 1792193000000,
       "tag": "0003_delivery_receipt_defaults",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792207865272,
+      "tag": "0004_famous_proudstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792208223947,
+      "tag": "0005_elite_ogun",
+      "breakpoints": true
     }
   ]
 }

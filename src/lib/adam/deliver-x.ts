@@ -38,7 +38,7 @@ export async function deliverPostTeaserToX(
     idempotencyKey: input.idempotencyKey,
     dryRun: input.dryRun,
     isClientConfigured: () => getXClient() !== null,
-    send: async () => {
+    send: async (_ctx) => {
       const client = getXClient();
       if (!client) {
         throw new Error("X client is not configured");
