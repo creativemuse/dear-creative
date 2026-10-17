@@ -7,10 +7,12 @@ import {
   subscribers,
   type DeliveryReceiptChunkStatus,
 } from "@/db/schema";
+import { DEFAULT_DELIVERY_PENDING_STALE_MS } from "@/lib/approval/delivery-receipt-constants";
 import {
   CHUNK_AUTO_RETRY_MAX_AGE_MS,
   NEWSLETTER_CHUNK_SIZE,
 } from "./newsletter-chunk-constants";
+import { subscriberIdsSendHash } from "./subscriber-id-set-hash";
 
 export type FrozenSubscriber = {
   id: string;
@@ -101,11 +103,20 @@ export async function resolveFrozenChunkRecipients(
   const rows = await db
     .select({ id: subscribers.id, email: subscribers.email })
     .from(subscribers)
-    .where(inArray(subscribers.id, subscriberIds));
+    .where(
+      and(
+        inArray(subscribers.id, subscriberIds),
+        eq(subscribers.status, "subscribed"),
+      ),
+    );
   const byId = new Map(rows.map((row) => [row.id, row]));
   return subscriberIds
     .map((id) => byId.get(id))
     .filter((row): row is FrozenSubscriber => row !== undefined);
+}
+
+export function hashFrozenChunkRecipientIds(recipientIds: string[]): string {
+  return subscriberIdsSendHash(recipientIds);
 }
 
 export function isChunkRetryStale(
@@ -183,7 +194,7 @@ export async function claimChunkForSend(
   }
 
   if (
-    chunk.status === "failed" &&
+    (chunk.status === "failed" || chunk.status === "pending") &&
     isChunkRetryStale(chunk.lastAttemptAt, now)
   ) {
     await markChunkNeedsReview(
@@ -199,6 +210,15 @@ export async function claimChunkForSend(
       now,
     );
     return { ok: false, reason: "needs_review" };
+  }
+
+  if (
+    chunk.status === "pending" &&
+    chunk.lastAttemptAt &&
+    now.getTime() - chunk.lastAttemptAt.getTime() <=
+      DEFAULT_DELIVERY_PENDING_STALE_MS
+  ) {
+    return { ok: false, reason: "not_claimable" };
   }
 
   const claimed = await db
@@ -227,6 +247,7 @@ export async function claimChunkForSend(
 export async function markChunkCompleted(
   db: DearCreativeDb,
   chunkId: string,
+  sent: { subscriberIds: string[]; hash: string },
   now = new Date(),
 ): Promise<void> {
   await db
@@ -234,6 +255,8 @@ export async function markChunkCompleted(
     .set({
       status: "completed",
       lastError: null,
+      sentSubscriberIdsHash: sent.hash,
+      lastSentSubscriberIdsJson: JSON.stringify(sent.subscriberIds),
       updatedAt: now,
     })
     .where(eq(deliveryReceiptChunks.id, chunkId));

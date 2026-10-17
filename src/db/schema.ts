@@ -204,6 +204,8 @@ export const deliveryReceiptChunks = sqliteTable(
     attempts: integer("attempts").notNull().default(0),
     lastAttemptAt: integer("last_attempt_at", { mode: "timestamp_ms" }),
     lastError: text("last_error"),
+    sentSubscriberIdsHash: text("sent_subscriber_ids_hash"),
+    lastSentSubscriberIdsJson: text("last_sent_subscriber_ids_json"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

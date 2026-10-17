@@ -23,14 +23,24 @@ import {
   subscribers,
 } from "@/db/schema";
 import { contentHashForPost } from "@/lib/approval/snapshot-from-post";
+import { DEFAULT_DELIVERY_PENDING_STALE_MS } from "@/lib/approval/delivery-receipt-constants";
 import { CHUNK_AUTO_RETRY_MAX_AGE_MS } from "@/lib/adam/newsletter-chunk-constants";
 import { buildUnsubscribeUrl } from "@/lib/email/list-unsubscribe";
 import {
   resetResendBroadcastClientForTests,
 } from "@/lib/resend/broadcast";
 import { resendIdempotencyKeyForChunk } from "@/lib/resend/idempotency";
-import { parseSubscriberIdsJson } from "./newsletter-chunks";
+import {
+  hashFrozenChunkRecipientIds,
+  parseSubscriberIdsJson,
+} from "./newsletter-chunks";
+import { subscriberIdsSendHash } from "./subscriber-id-set-hash";
 import { sendNewsletterEmail } from "./deliver-email";
+
+function chunkIndexFromIdempotencyKey(key: string): number | null {
+  const match = key.match(/\/chunk\/(\d+)\//);
+  return match ? Number(match[1]) : null;
+}
 
 const { batchSend, ResendMock } = vi.hoisted(() => {
   const batchSend = vi.fn();
@@ -166,15 +176,6 @@ describe("sendNewsletterEmail", () => {
       .from(deliveryReceipts)
       .where(eq(deliveryReceipts.postId, postId));
 
-    const keys = batchSend.mock.calls.map(
-      (call) => (call[1] as { idempotencyKey: string }).idempotencyKey,
-    );
-    expect(keys).toEqual([
-      resendIdempotencyKeyForChunk(receipt!.id, 0),
-      resendIdempotencyKeyForChunk(receipt!.id, 1),
-      resendIdempotencyKeyForChunk(receipt!.id, 2),
-    ]);
-
     const chunkRows = await db
       .select()
       .from(deliveryReceiptChunks)
@@ -183,6 +184,21 @@ describe("sendNewsletterEmail", () => {
     expect(
       chunkRows.map((row) => parseSubscriberIdsJson(row.subscriberIdsJson).length),
     ).toEqual([100, 100, 50]);
+
+    const keys = batchSend.mock.calls.map(
+      (call) => (call[1] as { idempotencyKey: string }).idempotencyKey,
+    );
+    expect(keys).toEqual(
+      chunkRows.map((row) =>
+        resendIdempotencyKeyForChunk(
+          receipt!.id,
+          row.chunkIndex,
+          hashFrozenChunkRecipientIds(
+            parseSubscriberIdsJson(row.subscriberIdsJson),
+          ),
+        ),
+      ),
+    );
   });
 
   it("retries only the failed chunk with the same idempotency key", async () => {
@@ -191,7 +207,7 @@ describe("sendNewsletterEmail", () => {
     batchSend.mockImplementation(
       (_payload, options: { idempotencyKey: string }) => {
         batchCalls += 1;
-        if (options.idempotencyKey.endsWith("/chunk/1")) {
+        if (chunkIndexFromIdempotencyKey(options.idempotencyKey) === 1) {
           return Promise.resolve({
             data: null,
             error: { message: "Resend unavailable" },
@@ -217,7 +233,7 @@ describe("sendNewsletterEmail", () => {
     expect(batchCalls).toBe(2);
 
     batchSend.mockImplementation((_payload, options: { idempotencyKey: string }) => {
-      if (options.idempotencyKey.endsWith("/chunk/1")) {
+      if (chunkIndexFromIdempotencyKey(options.idempotencyKey) === 1) {
         return Promise.resolve({
           data: { data: [{ id: "email-retry-chunk-1" }] },
           error: null,
@@ -235,10 +251,11 @@ describe("sendNewsletterEmail", () => {
     });
     expect(succeeded.outcome).toBe("sent");
 
-    const chunkOneCalls = batchSend.mock.calls.filter((call) =>
-      (call[1] as { idempotencyKey: string }).idempotencyKey.endsWith(
-        "/chunk/1",
-      ),
+    const chunkOneCalls = batchSend.mock.calls.filter(
+      (call) =>
+        chunkIndexFromIdempotencyKey(
+          (call[1] as { idempotencyKey: string }).idempotencyKey,
+        ) === 1,
     );
     expect(chunkOneCalls).toHaveLength(2);
     expect(
@@ -246,10 +263,11 @@ describe("sendNewsletterEmail", () => {
     ).toBe((chunkOneCalls[1]![1] as { idempotencyKey: string }).idempotencyKey);
 
     expect(
-      batchSend.mock.calls.filter((call) =>
-        (call[1] as { idempotencyKey: string }).idempotencyKey.endsWith(
-          "/chunk/0",
-        ),
+      batchSend.mock.calls.filter(
+        (call) =>
+          chunkIndexFromIdempotencyKey(
+            (call[1] as { idempotencyKey: string }).idempotencyKey,
+          ) === 0,
       ),
     ).toHaveLength(1);
   });
@@ -350,7 +368,7 @@ describe("sendNewsletterEmail", () => {
     process.env.RESEND_LIVE = "true";
     batchSend.mockImplementation(
       (_payload, options: { idempotencyKey: string }) => {
-        if (options.idempotencyKey.endsWith("/chunk/1")) {
+        if (chunkIndexFromIdempotencyKey(options.idempotencyKey) === 1) {
           return Promise.resolve({
             data: null,
             error: { message: "fail chunk 1" },
@@ -421,12 +439,232 @@ describe("sendNewsletterEmail", () => {
       frozenIdsBefore,
     );
     expect(
-      batchSend.mock.calls.filter((call) =>
-        (call[1] as { idempotencyKey: string }).idempotencyKey.endsWith(
-          "/chunk/0",
-        ),
+      batchSend.mock.calls.filter(
+        (call) =>
+          chunkIndexFromIdempotencyKey(
+            (call[1] as { idempotencyKey: string }).idempotencyKey,
+          ) === 0,
       ),
     ).toHaveLength(1);
+  });
+
+  it("changes the idempotency key when a frozen recipient unsubscribed before retry", async () => {
+    process.env.RESEND_LIVE = "true";
+    const subA = randomUUID();
+    const subB = randomUUID();
+    batchSend.mockResolvedValueOnce({
+      data: null,
+      error: { message: "temporary failure" },
+    });
+
+    const db = await createTestDb();
+    const postId = randomUUID();
+    const postRow = {
+      id: postId,
+      slug: "unsub-key",
+      title: "Issue",
+      status: "draft" as const,
+      teaserText: "Teaser",
+      emailSubject: "Subject",
+      emailHtml: "<p>Body</p>",
+      sponsorId: null,
+    };
+    await db.insert(posts).values(postRow);
+    await db.insert(approvals).values({
+      id: randomUUID(),
+      postId,
+      status: "approved",
+      contentHash: contentHashForPost(postRow),
+      approvedAt: new Date(),
+      approvedBy: "did:privy:g2",
+    });
+    await db.insert(subscribers).values([
+      {
+        id: subA,
+        email: "a@example.test",
+        status: "subscribed",
+        source: "signup",
+        subscribedAt: new Date(),
+      },
+      {
+        id: subB,
+        email: "b@example.test",
+        status: "subscribed",
+        source: "signup",
+        subscribedAt: new Date(),
+      },
+    ]);
+
+    await sendNewsletterEmail(db, {
+      postId,
+      idempotencyKey: "post:unsub-key-fail",
+    });
+
+    await db
+      .update(subscribers)
+      .set({ status: "unsubscribed" })
+      .where(eq(subscribers.id, subB));
+
+    batchSend.mockResolvedValue({
+      data: { data: [{ id: "ok" }] },
+      error: null,
+    });
+
+    await sendNewsletterEmail(db, {
+      postId,
+      idempotencyKey: "post:unsub-key-retry",
+    });
+
+    const keys = batchSend.mock.calls.map(
+      (call) => (call[1] as { idempotencyKey: string }).idempotencyKey,
+    );
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys[1]!.endsWith(subscriberIdsSendHash([subA]))).toBe(true);
+
+    const [payload] = batchSend.mock.calls[1] as [
+      { to: string[] }[],
+    ];
+    expect(payload).toHaveLength(1);
+    expect(payload[0]?.to).toEqual(["a@example.test"]);
+  });
+
+  it("skips SDK send and completes when filtered recipients are empty", async () => {
+    process.env.RESEND_LIVE = "true";
+    batchSend.mockResolvedValue({
+      data: null,
+      error: { message: "fail first" },
+    });
+
+    const db = await createTestDb();
+    const postId = await seedApprovedNewsletterPost(db, { subscriberCount: 1 });
+    const [sub] = await db.select().from(subscribers);
+
+    await sendNewsletterEmail(db, {
+      postId,
+      idempotencyKey: "post:empty-chunk-fail",
+    });
+
+    await db
+      .update(subscribers)
+      .set({ status: "unsubscribed" })
+      .where(eq(subscribers.id, sub!.id));
+
+    batchSend.mockClear();
+
+    const result = await sendNewsletterEmail(db, {
+      postId,
+      idempotencyKey: "post:empty-chunk-retry",
+    });
+
+    expect(result.outcome).toBe("sent");
+    expect(batchSend).not.toHaveBeenCalled();
+
+    const [receipt] = await db
+      .select()
+      .from(deliveryReceipts)
+      .where(eq(deliveryReceipts.postId, postId));
+    const [chunk] = await db
+      .select()
+      .from(deliveryReceiptChunks)
+      .where(eq(deliveryReceiptChunks.receiptId, receipt!.id));
+    expect(chunk?.status).toBe("completed");
+    expect(chunk?.sentSubscriberIdsHash).toBe(subscriberIdsSendHash([]));
+    expect(JSON.parse(chunk!.lastSentSubscriberIdsJson!)).toEqual([]);
+  });
+
+  it("marks stale pending chunks older than 23h as needs_review", async () => {
+    process.env.RESEND_LIVE = "true";
+    const db = await createTestDb();
+    const postId = await seedApprovedNewsletterPost(db, { subscriberCount: 1 });
+    const now = new Date("2026-03-01T12:00:00.000Z");
+    const receiptId = randomUUID();
+
+    await db.insert(deliveryReceipts).values({
+      id: receiptId,
+      postId,
+      channel: "email",
+      idempotencyKey: "manual:stale-pending",
+      status: "failed",
+      attempts: 1,
+      lastError: "prior",
+      updatedAt: now,
+      completedAt: now,
+    });
+    await db.insert(deliveryReceiptChunks).values({
+      id: randomUUID(),
+      receiptId,
+      chunkIndex: 0,
+      subscriberIdsJson: JSON.stringify([randomUUID()]),
+      status: "pending",
+      attempts: 1,
+      lastAttemptAt: new Date(
+        now.getTime() - CHUNK_AUTO_RETRY_MAX_AGE_MS - 60_000,
+      ),
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    batchSend.mockClear();
+    const review = await sendNewsletterEmail(db, {
+      postId,
+      idempotencyKey: "post:stale-pending-retry",
+      now,
+    });
+
+    expect(review.outcome).toBe("needs_review");
+    expect(batchSend).not.toHaveBeenCalled();
+  });
+
+  it("reclaims a stale pending chunk when last attempt is under 23h", async () => {
+    process.env.RESEND_LIVE = "true";
+    batchSend.mockResolvedValue({
+      data: { data: [{ id: "recovered" }] },
+      error: null,
+    });
+
+    const db = await createTestDb();
+    const postId = await seedApprovedNewsletterPost(db, { subscriberCount: 1 });
+    const now = new Date("2026-03-01T12:00:00.000Z");
+    const receiptId = randomUUID();
+    const subRows = await db.select().from(subscribers);
+    const subId = subRows[0]!.id;
+
+    await db.insert(deliveryReceipts).values({
+      id: receiptId,
+      postId,
+      channel: "email",
+      idempotencyKey: "manual:stale-reclaim",
+      status: "failed",
+      attempts: 1,
+      lastError: "prior",
+      updatedAt: now,
+      completedAt: now,
+    });
+    await db.insert(deliveryReceiptChunks).values({
+      id: randomUUID(),
+      receiptId,
+      chunkIndex: 0,
+      subscriberIdsJson: JSON.stringify([subId]),
+      status: "pending",
+      attempts: 1,
+      lastAttemptAt: new Date(
+        now.getTime() - DEFAULT_DELIVERY_PENDING_STALE_MS - 60_000,
+      ),
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const result = await sendNewsletterEmail(db, {
+      postId,
+      idempotencyKey: "post:stale-pending-reclaim",
+      now,
+    });
+
+    expect(result.outcome).toBe("sent");
+    expect(batchSend).toHaveBeenCalledTimes(1);
   });
 
   it("aborts the provider call when the timeout elapses", async () => {

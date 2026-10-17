@@ -26,6 +26,7 @@ import {
   markChunkCompleted,
   markChunkFailed,
   markReceiptNeedsReview,
+  hashFrozenChunkRecipientIds,
   parseSubscriberIdsJson,
   receiptHasNeedsReviewChunk,
   resolveFrozenChunkRecipients,
@@ -149,6 +150,18 @@ async function sendNewsletterChunks(
       db,
       subscriberIds,
     );
+    const sendableIds = frozenRecipients.map((recipient) => recipient.id);
+    const recipientSetHash = hashFrozenChunkRecipientIds(sendableIds);
+
+    if (sendableIds.length === 0) {
+      await markChunkCompleted(
+        db,
+        claim.chunk.id,
+        { subscriberIds: sendableIds, hash: recipientSetHash },
+        now,
+      );
+      continue;
+    }
 
     const recipients = frozenRecipients.map((recipient) => ({
       email: recipient.email,
@@ -173,12 +186,18 @@ async function sendNewsletterChunks(
             {
               deliveryReceiptId: input.receiptId,
               chunkIndex: chunkRow.chunkIndex,
+              recipientSetHash,
               signal,
             },
           ),
         input.providerTimeoutMs ?? DEFAULT_PROVIDER_CALL_TIMEOUT_MS,
       );
-      await markChunkCompleted(db, claim.chunk.id, now);
+      await markChunkCompleted(
+        db,
+        claim.chunk.id,
+        { subscriberIds: sendableIds, hash: recipientSetHash },
+        now,
+      );
       if (!firstBroadcastId) {
         firstBroadcastId = providerResult.broadcastId;
       }

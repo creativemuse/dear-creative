@@ -15,6 +15,7 @@ export type BroadcastChunkPayload = {
 export type BroadcastChunkSendOptions = {
   deliveryReceiptId: string;
   chunkIndex: number;
+  recipientSetHash: string;
   signal: AbortSignal;
 };
 
@@ -76,6 +77,7 @@ const loggingMockClient: ResendBroadcastClient = {
         idempotencyKey: resendIdempotencyKeyForChunk(
           options.deliveryReceiptId,
           options.chunkIndex,
+          options.recipientSetHash,
         ),
       },
     );
@@ -96,6 +98,7 @@ const liveClient: ResendBroadcastClient = {
     const idempotencyKey = resendIdempotencyKeyForChunk(
       options.deliveryReceiptId,
       options.chunkIndex,
+      options.recipientSetHash,
     );
 
     const result = await resend.batch.send(
