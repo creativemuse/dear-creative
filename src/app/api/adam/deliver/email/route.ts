@@ -53,5 +53,12 @@ export async function POST(request: Request) {
     );
   }
 
+  if (result.outcome === "needs_review") {
+    return NextResponse.json(
+      { error: "Delivery needs review", message: result.message },
+      { status: 409 },
+    );
+  }
+
   return NextResponse.json(result);
 }

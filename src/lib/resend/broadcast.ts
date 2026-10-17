@@ -1,43 +1,37 @@
 import { Resend } from "resend";
+import { resendIdempotencyKeyForChunk } from "./idempotency";
 
-export type BroadcastPayload = {
-  subject: string;
-  html: string;
-  to: string[];
+export type NewsletterEmailRecipient = {
+  email: string;
+  headers: Record<string, string>;
 };
 
-export type BroadcastSendOptions = {
+export type BroadcastChunkPayload = {
+  subject: string;
+  html: string;
+  recipients: NewsletterEmailRecipient[];
+};
+
+export type BroadcastChunkSendOptions = {
   deliveryReceiptId: string;
+  chunkIndex: number;
   signal: AbortSignal;
 };
 
-export type BroadcastResult = { broadcastId: string };
+export type BroadcastChunkResult = { broadcastId: string };
 
 export interface ResendBroadcastClient {
-  sendBroadcast(
-    payload: BroadcastPayload,
-    options: BroadcastSendOptions,
-  ): Promise<BroadcastResult>;
+  sendChunk(
+    payload: BroadcastChunkPayload,
+    options: BroadcastChunkSendOptions,
+  ): Promise<BroadcastChunkResult>;
 }
-
-const RESEND_BATCH_MAX = 100;
 
 let clientOverride: ResendBroadcastClient | null | undefined;
 let liveResend: Resend | undefined;
 
 export function isResendLiveEnabled(): boolean {
   return process.env.RESEND_LIVE === "true";
-}
-
-export function resendIdempotencyKeyForReceipt(
-  receiptId: string,
-  batchIndex?: number,
-): string {
-  const base = `dear-creative/receipt/${receiptId}`;
-  if (batchIndex === undefined) {
-    return base;
-  }
-  return `${base}/batch-${batchIndex}`;
 }
 
 export function setResendBroadcastClientForTests(
@@ -70,73 +64,60 @@ function getLiveResend(): Resend {
   return liveResend;
 }
 
-function chunkRecipients<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
-
 const loggingMockClient: ResendBroadcastClient = {
-  async sendBroadcast(payload, options) {
+  async sendChunk(payload, options) {
     console.info(
-      "[resend-mock] newsletter send skipped (RESEND_LIVE is not true)",
+      "[resend-mock] newsletter chunk skipped (RESEND_LIVE is not true)",
       {
         deliveryReceiptId: options.deliveryReceiptId,
+        chunkIndex: options.chunkIndex,
         subject: payload.subject,
-        recipientCount: payload.to.length,
-        idempotencyKey: resendIdempotencyKeyForReceipt(
+        recipientCount: payload.recipients.length,
+        idempotencyKey: resendIdempotencyKeyForChunk(
           options.deliveryReceiptId,
+          options.chunkIndex,
         ),
       },
     );
-    return { broadcastId: `mock-${options.deliveryReceiptId}` };
+    return {
+      broadcastId: `mock-${options.deliveryReceiptId}-${options.chunkIndex}`,
+    };
   },
 };
 
 const liveClient: ResendBroadcastClient = {
-  async sendBroadcast(payload, options) {
-    if (payload.to.length === 0) {
-      throw new Error("No newsletter recipients");
+  async sendChunk(payload, options) {
+    if (payload.recipients.length === 0) {
+      throw new Error("No newsletter recipients in chunk");
     }
 
     const from = getResendFromAddress();
     const resend = getLiveResend();
-    const batches = chunkRecipients(payload.to, RESEND_BATCH_MAX);
-    let firstEmailId: string | undefined;
+    const idempotencyKey = resendIdempotencyKeyForChunk(
+      options.deliveryReceiptId,
+      options.chunkIndex,
+    );
 
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-      const recipients = batches[batchIndex]!;
-      const idempotencyKey = resendIdempotencyKeyForReceipt(
-        options.deliveryReceiptId,
-        batches.length === 1 ? undefined : batchIndex,
-      );
+    const result = await resend.batch.send(
+      payload.recipients.map((recipient) => ({
+        from,
+        to: [recipient.email],
+        subject: payload.subject,
+        html: payload.html,
+        headers: recipient.headers,
+      })),
+      {
+        idempotencyKey,
+        signal: options.signal,
+      },
+    );
 
-      const result = await resend.batch.send(
-        recipients.map((to) => ({
-          from,
-          to: [to],
-          subject: payload.subject,
-          html: payload.html,
-        })),
-        {
-          idempotencyKey,
-          signal: options.signal,
-        },
-      );
-
-      if (result.error) {
-        throw new Error(result.error.message);
-      }
-
-      const emailId = result.data?.data?.[0]?.id;
-      if (emailId && !firstEmailId) {
-        firstEmailId = emailId;
-      }
+    if (result.error) {
+      throw new Error(result.error.message);
     }
 
-    return { broadcastId: firstEmailId ?? "unknown" };
+    const emailId = result.data?.data?.[0]?.id;
+    return { broadcastId: emailId ?? "unknown" };
   },
 };
 

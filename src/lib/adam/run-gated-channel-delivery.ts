@@ -21,7 +21,8 @@ export type GatedDeliveryBlockedReason =
   | "approval_expired"
   | "already_delivered"
   | "in_progress"
-  | "client_unconfigured";
+  | "client_unconfigured"
+  | "needs_review";
 
 export type RunGatedChannelDeliveryInput<T> = {
   db: DearCreativeDb;

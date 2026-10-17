@@ -10,7 +10,10 @@ import { DEFAULT_DELIVERY_PENDING_STALE_MS } from "./delivery-receipt-constants"
 
 export type ClaimDeliverySlotResult =
   | { ok: true; receiptId: string }
-  | { ok: false; reason: "already_delivered" | "in_progress" };
+  | {
+      ok: false;
+      reason: "already_delivered" | "in_progress" | "needs_review";
+    };
 
 export type ClaimDeliveryOptions = {
   stalePendingMs?: number;
@@ -69,6 +72,10 @@ export async function claimDeliverySlot(
 
   if (existing.status === "completed") {
     return { ok: false, reason: "already_delivered" };
+  }
+
+  if (existing.status === "needs_review") {
+    return { ok: false, reason: "needs_review" };
   }
 
   if (existing.status === "pending") {
