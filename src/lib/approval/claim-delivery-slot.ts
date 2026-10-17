@@ -9,7 +9,7 @@ import { isSqliteUniqueConstraintError } from "@/lib/db/sqlite-errors";
 import { DEFAULT_DELIVERY_PENDING_STALE_MS } from "./delivery-receipt-constants";
 
 export type ClaimDeliverySlotResult =
-  | { ok: true }
+  | { ok: true; receiptId: string }
   | { ok: false; reason: "already_delivered" | "in_progress" };
 
 export type ClaimDeliveryOptions = {
@@ -31,9 +31,10 @@ export async function claimDeliverySlot(
     options.stalePendingMs ?? DEFAULT_DELIVERY_PENDING_STALE_MS;
   const staleBefore = new Date(now.getTime() - stalePendingMs);
 
+  const receiptId = randomUUID();
   try {
     await db.insert(deliveryReceipts).values({
-      id: randomUUID(),
+      id: receiptId,
       postId: input.postId,
       channel: input.channel,
       idempotencyKey: input.idempotencyKey,
@@ -44,7 +45,7 @@ export async function claimDeliverySlot(
       // Legacy NOT NULL column until migration makes completed_at nullable.
       completedAt: now,
     });
-    return { ok: true };
+    return { ok: true, receiptId };
   } catch (error) {
     if (!isSqliteUniqueConstraintError(error)) {
       throw error;
@@ -95,7 +96,7 @@ export async function claimDeliverySlot(
       .returning({ id: deliveryReceipts.id });
 
     return reclaimed.length > 0
-      ? { ok: true }
+      ? { ok: true, receiptId: existing.id }
       : { ok: false, reason: "in_progress" };
   }
 
@@ -119,7 +120,7 @@ export async function claimDeliverySlot(
       .returning({ id: deliveryReceipts.id });
 
     return reclaimed.length > 0
-      ? { ok: true }
+      ? { ok: true, receiptId: existing.id }
       : { ok: false, reason: "in_progress" };
   }
 

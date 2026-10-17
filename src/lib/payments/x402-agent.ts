@@ -100,7 +100,7 @@ export async function verifyAgentPaymentHeader(
   }
   try {
     return await withProviderTimeout(
-      () => verifier.verifyPaymentHeader(paymentHeader, input),
+      (_signal) => verifier.verifyPaymentHeader(paymentHeader, input),
       providerTimeoutMs ?? DEFAULT_PROVIDER_CALL_TIMEOUT_MS,
     );
   } catch (error) {

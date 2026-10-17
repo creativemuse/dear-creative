@@ -30,7 +30,7 @@ export type RunGatedChannelDeliveryInput<T> = {
   idempotencyKey: string;
   dryRun?: boolean;
   isClientConfigured: () => boolean;
-  send: () => Promise<T>;
+  send: (ctx: { deliveryReceiptId: string; signal: AbortSignal }) => Promise<T>;
   formatSuccess: (result: T) => Record<string, unknown>;
   claimOptions?: ClaimDeliveryOptions;
   providerTimeoutMs?: number;
@@ -77,7 +77,8 @@ export async function runGatedChannelDelivery<T>(
 
   try {
     const providerResult = await withProviderTimeout(
-      () => input.send(),
+      (signal) =>
+        input.send({ deliveryReceiptId: claim.receiptId, signal }),
       input.providerTimeoutMs ?? DEFAULT_PROVIDER_CALL_TIMEOUT_MS,
     );
     await markDeliveryCompleted(input.db, {

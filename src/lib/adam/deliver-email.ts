@@ -1,4 +1,6 @@
+import { eq } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { subscribers } from "@/db/schema";
 import { assertDeliverable } from "@/lib/approval/delivery-gate";
 import type { ClaimDeliveryOptions } from "@/lib/approval/claim-delivery-slot";
 import { getResendBroadcastClient } from "@/lib/resend/broadcast";
@@ -9,12 +11,23 @@ export type DeliverEmailInput = {
   idempotencyKey: string;
   dryRun?: boolean;
   claimOptions?: ClaimDeliveryOptions;
+  providerTimeoutMs?: number;
 };
 
 export type DeliverEmailResult =
   | { outcome: "sent"; broadcastId: string; dryRun: boolean }
   | { outcome: "blocked"; reason: string }
   | { outcome: "provider_failed"; errorMessage: string };
+
+async function listNewsletterRecipientEmails(
+  db: DearCreativeDb,
+): Promise<string[]> {
+  const rows = await db
+    .select({ email: subscribers.email })
+    .from(subscribers)
+    .where(eq(subscribers.status, "subscribed"));
+  return rows.map((row) => row.email);
+}
 
 export async function sendNewsletterEmail(
   db: DearCreativeDb,
@@ -31,6 +44,8 @@ export async function sendNewsletterEmail(
     return { outcome: "blocked", reason: "not_found" };
   }
 
+  const recipients = await listNewsletterRecipientEmails(db);
+
   const result = await runGatedChannelDelivery({
     db,
     postId: input.postId,
@@ -38,17 +53,21 @@ export async function sendNewsletterEmail(
     idempotencyKey: input.idempotencyKey,
     dryRun: input.dryRun,
     isClientConfigured: () => getResendBroadcastClient() !== null,
-    send: async () => {
+    send: async ({ deliveryReceiptId, signal }) => {
       const resend = getResendBroadcastClient();
       if (!resend) {
         throw new Error("Resend broadcast client is not configured");
       }
-      return resend.sendBroadcast({ subject, html });
+      return resend.sendBroadcast(
+        { subject, html, to: recipients },
+        { deliveryReceiptId, signal },
+      );
     },
     formatSuccess: (provider) => ({
       broadcastId: provider.broadcastId,
     }),
     claimOptions: input.claimOptions,
+    providerTimeoutMs: input.providerTimeoutMs,
   });
 
   if (result.outcome === "blocked") {

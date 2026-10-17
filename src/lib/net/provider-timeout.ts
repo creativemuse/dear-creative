@@ -8,25 +8,11 @@ export class ProviderCallTimeoutError extends Error {
 }
 
 export async function withProviderTimeout<T>(
-  operation: () => Promise<T>,
+  operation: (signal: AbortSignal) => Promise<T>,
   timeoutMs = DEFAULT_PROVIDER_CALL_TIMEOUT_MS,
 ): Promise<T> {
-  const { promise, dispose } = awaitableWithAbortTimeout(timeoutMs);
-  try {
-    return await Promise.race([operation(), promise]);
-  } finally {
-    dispose();
-  }
-}
-
-function awaitableWithAbortTimeout(timeoutMs: number): {
-  promise: Promise<never>;
-  dispose: () => void;
-} {
   const signal = AbortSignal.timeout(timeoutMs);
-  let rejectRef: ((reason: Error) => void) | undefined;
-  const promise = new Promise<never>((_, reject) => {
-    rejectRef = reject;
+  const timeoutPromise = new Promise<never>((_, reject) => {
     const onAbort = () => {
       reject(new ProviderCallTimeoutError(timeoutMs));
     };
@@ -36,10 +22,5 @@ function awaitableWithAbortTimeout(timeoutMs: number): {
     }
     signal.addEventListener("abort", onAbort, { once: true });
   });
-  return {
-    promise,
-    dispose: () => {
-      rejectRef = undefined;
-    },
-  };
+  return Promise.race([operation(signal), timeoutPromise]);
 }
