@@ -1,8 +1,9 @@
-import type { ArticleUpsertRow } from "./schema";
+import type { PostArchiveUpsertRow } from "./schema";
 
 export const DEFAULT_NEWS_ORIGIN = "https://news.creativeplatform.xyz";
 export const DEFAULT_RSS_URL = `${DEFAULT_NEWS_ORIGIN}/rss.xml`;
 export const DEFAULT_INDEX_URL = `${DEFAULT_NEWS_ORIGIN}/`;
+export const DEFAULT_ARCHIVE_URL = `${DEFAULT_NEWS_ORIGIN}/archive`;
 
 export type ParsedFeedItem = {
   guid: string;
@@ -23,13 +24,15 @@ export type IndexEntry = {
 
 export type ArchiveImportSummary = {
   feedItems: number;
-  indexItems: number;
+  homeIndexItems: number;
+  archivePageItems: number;
+  archiveItems: number;
   matches: number;
   wouldInsert: number;
   wouldUpdate: number;
   wouldSkip: number;
   feedOnly: number;
-  indexOnly: number;
+  archiveOnly: number;
   schemaReady: boolean;
   schemaMissing: string[];
 };
@@ -123,7 +126,7 @@ export function parseRssItems(
   return items;
 }
 
-export function parseIndexPage(
+export function parsePostListingPage(
   html: string,
   siteOrigin = DEFAULT_NEWS_ORIGIN,
 ): IndexEntry[] {
@@ -144,7 +147,7 @@ export function parseIndexPage(
       : null;
     const publishedAt = timeMatch?.[1] ? new Date(timeMatch[1]) : null;
     if (publishedAt && Number.isNaN(publishedAt.getTime())) {
-      throw new Error(`Invalid datetime on index link ${path}`);
+      throw new Error(`Invalid datetime on listing link ${path}`);
     }
 
     const canonicalUrl = normalizeCanonicalUrl(path, siteOrigin);
@@ -161,46 +164,65 @@ export function parseIndexPage(
   return [...byPath.values()];
 }
 
-function articleKey(row: { guid: string; canonicalUrl: string }): string {
-  return row.guid || row.canonicalUrl;
+export function mergeArchiveListingEntries(
+  home: IndexEntry[],
+  archive: IndexEntry[],
+): IndexEntry[] {
+  const bySlug = new Map<string, IndexEntry>();
+  for (const entry of [...home, ...archive]) {
+    bySlug.set(entry.slug, entry);
+  }
+  return [...bySlug.values()];
 }
 
-function sameArticle(
-  existing: ArticleUpsertRow,
-  incoming: ArticleUpsertRow,
+function postArchiveKey(row: {
+  sourceGuid: string;
+  canonicalUrl: string;
+}): string {
+  return row.sourceGuid || row.canonicalUrl;
+}
+
+function samePostArchive(
+  existing: PostArchiveUpsertRow,
+  incoming: PostArchiveUpsertRow,
 ): boolean {
   return (
     existing.title === incoming.title &&
-    (existing.description ?? "") === (incoming.description ?? "") &&
+    (existing.teaserText ?? "") === (incoming.teaserText ?? "") &&
+    (existing.bodyHtml ?? "") === (incoming.bodyHtml ?? "") &&
     (existing.publishedAt?.getTime() ?? null) ===
       (incoming.publishedAt?.getTime() ?? null) &&
     existing.canonicalUrl === incoming.canonicalUrl &&
-    existing.guid === incoming.guid
+    existing.sourceGuid === incoming.sourceGuid &&
+    existing.slug === incoming.slug
   );
 }
 
-export function mergeFeedWithIndex(
+export function feedItemsToPostRows(
   feed: ParsedFeedItem[],
-  index: IndexEntry[],
-): ArticleUpsertRow[] {
-  const indexBySlug = new Map(index.map((entry) => [entry.slug, entry]));
+  listing: IndexEntry[],
+): PostArchiveUpsertRow[] {
+  const listingBySlug = new Map(listing.map((entry) => [entry.slug, entry]));
 
   return feed.map((item) => {
-    const indexEntry = indexBySlug.get(item.slug);
+    const listingEntry = listingBySlug.get(item.slug);
     return {
-      guid: item.guid,
+      sourceGuid: item.guid,
       canonicalUrl: item.canonicalUrl,
       slug: item.slug,
-      title: indexEntry?.title ?? item.title,
-      description: item.description,
-      publishedAt: indexEntry?.publishedAt ?? item.publishedAt,
+      title: listingEntry?.title ?? item.title,
+      teaserText: item.description,
+      bodyHtml: null,
+      publishedAt: listingEntry?.publishedAt ?? item.publishedAt,
+      source: "paragraph",
+      status: "published",
     };
   });
 }
 
-export function planArchiveUpserts(
-  articles: ArticleUpsertRow[],
-  existingByKey: Map<string, ArticleUpsertRow>,
+export function planPostArchiveUpserts(
+  rows: PostArchiveUpsertRow[],
+  existingByKey: Map<string, PostArchiveUpsertRow>,
 ): Pick<
   ArchiveImportSummary,
   "wouldInsert" | "wouldUpdate" | "wouldSkip"
@@ -209,14 +231,14 @@ export function planArchiveUpserts(
   let wouldUpdate = 0;
   let wouldSkip = 0;
 
-  for (const article of articles) {
-    const key = articleKey(article);
+  for (const row of rows) {
+    const key = postArchiveKey(row);
     const existing = existingByKey.get(key);
     if (!existing) {
       wouldInsert += 1;
       continue;
     }
-    if (sameArticle(existing, article)) {
+    if (samePostArchive(existing, row)) {
       wouldSkip += 1;
     } else {
       wouldUpdate += 1;
@@ -226,82 +248,96 @@ export function planArchiveUpserts(
   return { wouldInsert, wouldUpdate, wouldSkip };
 }
 
-export function countFeedIndexMatches(
+export function countFeedArchiveMatches(
   feed: ParsedFeedItem[],
-  index: IndexEntry[],
-): { matches: number; feedOnly: number; indexOnly: number } {
+  listing: IndexEntry[],
+): { matches: number; feedOnly: number; archiveOnly: number } {
   const feedSlugs = new Set(feed.map((item) => item.slug));
-  const indexSlugs = new Set(index.map((item) => item.slug));
+  const listingSlugs = new Set(listing.map((item) => item.slug));
   let matches = 0;
   for (const slug of feedSlugs) {
-    if (indexSlugs.has(slug)) {
+    if (listingSlugs.has(slug)) {
       matches += 1;
     }
   }
   let feedOnly = 0;
   for (const slug of feedSlugs) {
-    if (!indexSlugs.has(slug)) {
+    if (!listingSlugs.has(slug)) {
       feedOnly += 1;
     }
   }
-  let indexOnly = 0;
-  for (const slug of indexSlugs) {
+  let archiveOnly = 0;
+  for (const slug of listingSlugs) {
     if (!feedSlugs.has(slug)) {
-      indexOnly += 1;
+      archiveOnly += 1;
     }
   }
-  return { matches, feedOnly, indexOnly };
+  return { matches, feedOnly, archiveOnly };
 }
 
 export async function runArchiveImportDryRun(input: {
   fetch?: FetchLike;
   rssUrl?: string;
   indexUrl?: string;
+  archiveUrl?: string;
   siteOrigin?: string;
-  existingByKey?: Map<string, ArticleUpsertRow>;
+  existingByKey?: Map<string, PostArchiveUpsertRow>;
   schemaReady: boolean;
   schemaMissing: string[];
 }): Promise<ArchiveImportSummary> {
   const fetchFn = input.fetch ?? globalThis.fetch.bind(globalThis);
   const rssUrl = input.rssUrl ?? DEFAULT_RSS_URL;
   const indexUrl = input.indexUrl ?? DEFAULT_INDEX_URL;
+  const archiveUrl = input.archiveUrl ?? DEFAULT_ARCHIVE_URL;
   const siteOrigin = input.siteOrigin ?? DEFAULT_NEWS_ORIGIN;
 
-  const [rssRes, indexRes] = await Promise.all([
+  const [rssRes, homeRes, archiveRes] = await Promise.all([
     fetchFn(rssUrl),
     fetchFn(indexUrl),
+    fetchFn(archiveUrl),
   ]);
   if (!rssRes.ok) {
     throw new Error(`RSS fetch failed: ${rssRes.status} ${rssUrl}`);
   }
-  if (!indexRes.ok) {
-    throw new Error(`Index fetch failed: ${indexRes.status} ${indexUrl}`);
+  if (!homeRes.ok) {
+    throw new Error(`Index fetch failed: ${homeRes.status} ${indexUrl}`);
+  }
+  if (!archiveRes.ok) {
+    throw new Error(`Archive fetch failed: ${archiveRes.status} ${archiveUrl}`);
   }
 
-  const [rssXml, indexHtml] = await Promise.all([
+  const [rssXml, homeHtml, archiveHtml] = await Promise.all([
     rssRes.text(),
-    indexRes.text(),
+    homeRes.text(),
+    archiveRes.text(),
   ]);
 
   const feed = parseRssItems(rssXml, siteOrigin);
-  const index = parseIndexPage(indexHtml, siteOrigin);
-  const { matches, feedOnly, indexOnly } = countFeedIndexMatches(feed, index);
-  const articles = mergeFeedWithIndex(feed, index);
-  const existing = input.existingByKey ?? new Map<string, ArticleUpsertRow>();
-  const { wouldInsert, wouldUpdate, wouldSkip } = planArchiveUpserts(
-    articles,
+  const homeIndex = parsePostListingPage(homeHtml, siteOrigin);
+  const archivePage = parsePostListingPage(archiveHtml, siteOrigin);
+  const listing = mergeArchiveListingEntries(homeIndex, archivePage);
+  const { matches, feedOnly, archiveOnly } = countFeedArchiveMatches(
+    feed,
+    listing,
+  );
+  const postRows = feedItemsToPostRows(feed, listing);
+  const existing = input.existingByKey ?? new Map<string, PostArchiveUpsertRow>();
+  const { wouldInsert, wouldUpdate, wouldSkip } = planPostArchiveUpserts(
+    postRows,
     existing,
   );
 
   return {
     feedItems: feed.length,
-    indexItems: index.length,
+    homeIndexItems: homeIndex.length,
+    archivePageItems: archivePage.length,
+    archiveItems: listing.length,
     matches,
     wouldInsert,
     wouldUpdate,
     wouldSkip,
     feedOnly,
-    indexOnly,
+    archiveOnly,
     schemaReady: input.schemaReady,
     schemaMissing: input.schemaMissing,
   };

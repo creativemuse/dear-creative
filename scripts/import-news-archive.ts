@@ -1,7 +1,8 @@
 import {
-  assessArticlesSchemaReadiness,
+  assessPostsArchiveSchemaReadiness,
 } from "./news-archive-import/schema";
 import {
+  DEFAULT_ARCHIVE_URL,
   DEFAULT_INDEX_URL,
   DEFAULT_RSS_URL,
   runArchiveImportDryRun,
@@ -17,8 +18,9 @@ function parseArgs(argv: string[]): { dryRun: boolean } {
     if (arg === "--help" || arg === "-h") {
       console.log(`Usage: npm run import:news-archive -- --dry-run
 
-Fetches ${DEFAULT_RSS_URL} and cross-checks ${DEFAULT_INDEX_URL}.
-Dry-run performs no database reads or writes (Turso-safe).`);
+Fetches ${DEFAULT_RSS_URL}, cross-checks ${DEFAULT_INDEX_URL} and
+${DEFAULT_ARCHIVE_URL}, and plans upserts into posts (canonical_url /
+source_guid). Dry-run performs no database reads or writes.`);
       process.exit(0);
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -44,7 +46,7 @@ async function main() {
     process.exit(1);
   }
 
-  const schema = assessArticlesSchemaReadiness();
+  const schema = assessPostsArchiveSchemaReadiness();
   const summary = await runArchiveImportDryRun({
     schemaReady: schema.ready,
     schemaMissing: schema.missing,

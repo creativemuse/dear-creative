@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  countFeedIndexMatches,
-  mergeFeedWithIndex,
+  countFeedArchiveMatches,
+  feedItemsToPostRows,
+  mergeArchiveListingEntries,
   normalizeCanonicalUrl,
-  parseIndexPage,
+  parsePostListingPage,
   parseRssItems,
-  planArchiveUpserts,
+  planPostArchiveUpserts,
   slugFromCanonicalUrl,
 } from "./lib";
 
@@ -26,12 +27,13 @@ const sampleRss = `<?xml version="1.0" encoding="UTF-8"?>
 </item>
 </channel></rss>`;
 
-const sampleIndex = `
+const sampleListing = `
 <ul class="posts">
 <li><a href="/posts/alpha">
-<h3>Alpha from index</h3>
+<h3>Alpha from archive</h3>
 <time datetime="2024-01-01T00:00:00.000Z">Jan 1</time>
 </a></li>
+<li><a href="/posts/beta"><h3>Beta</h3></a></li>
 </ul>`;
 
 describe("parseRssItems", () => {
@@ -46,38 +48,35 @@ describe("parseRssItems", () => {
   });
 });
 
-describe("parseIndexPage", () => {
-  it("extracts post paths and prefers index titles", () => {
-    const index = parseIndexPage(sampleIndex);
-    expect(index).toHaveLength(1);
-    expect(index[0]?.slug).toBe("alpha");
-    expect(index[0]?.title).toBe("Alpha from index");
+describe("parsePostListingPage", () => {
+  it("extracts post paths and titles", () => {
+    const listing = parsePostListingPage(sampleListing);
+    expect(listing).toHaveLength(2);
+    expect(listing[0]?.slug).toBe("alpha");
+    expect(listing[0]?.title).toBe("Alpha from archive");
   });
 });
 
-describe("merge and plan", () => {
-  it("merges index metadata and plans idempotent upserts", () => {
+describe("merge and plan posts upsert", () => {
+  it("maps feed rows to posts and plans idempotent upserts", () => {
     const feed = parseRssItems(sampleRss);
-    const index = parseIndexPage(sampleIndex);
-    const { matches } = countFeedIndexMatches(feed, index);
-    expect(matches).toBe(1);
+    const listing = mergeArchiveListingEntries(
+      [],
+      parsePostListingPage(sampleListing),
+    );
+    const { matches } = countFeedArchiveMatches(feed, listing);
+    expect(matches).toBe(2);
 
-    const merged = mergeFeedWithIndex(feed, index);
-    const plan = planArchiveUpserts(merged, new Map());
+    const rows = feedItemsToPostRows(feed, listing);
+    expect(rows[0]?.source).toBe("paragraph");
+    expect(rows[0]?.status).toBe("published");
+    expect(rows[0]?.sourceGuid).toBe(rows[0]?.canonicalUrl);
+
+    const plan = planPostArchiveUpserts(rows, new Map());
     expect(plan.wouldInsert).toBe(2);
-    expect(plan.wouldUpdate).toBe(0);
-    expect(plan.wouldSkip).toBe(0);
 
-    const existing = new Map([
-      [
-        merged[0]!.guid,
-        {
-          ...merged[0]!,
-          title: merged[0]!.title,
-        },
-      ],
-    ]);
-    const secondPlan = planArchiveUpserts(merged, existing);
+    const existing = new Map([[rows[0]!.sourceGuid, { ...rows[0]! }]]);
+    const secondPlan = planPostArchiveUpserts(rows, existing);
     expect(secondPlan.wouldSkip).toBe(1);
     expect(secondPlan.wouldInsert).toBe(1);
   });

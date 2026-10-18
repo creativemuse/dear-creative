@@ -1,30 +1,23 @@
-/**
- * Target storage for the Paragraph / Dear Creative news archive import.
- * Turso is expected to expose an `articles` table; this repo currently has
- * `posts` only (see assessArticlesSchemaReadiness).
- */
-export type ArticleUpsertRow = {
-  guid: string;
+import type { PostSource } from "@/db/schema";
+
+/** Row shape for idempotent upsert into `posts`. */
+export type PostArchiveUpsertRow = {
+  sourceGuid: string;
   canonicalUrl: string;
   slug: string;
   title: string;
-  description: string | null;
+  teaserText: string | null;
+  bodyHtml: string | null;
   publishedAt: Date | null;
+  source: PostSource;
+  status: "published";
 };
 
-export type ArticlesSchemaReadiness = {
+export type PostsSchemaReadiness = {
   ready: boolean;
   missing: string[];
 };
 
-/** Read-only schema audit — no migrations. */
-export function assessArticlesSchemaReadiness(): ArticlesSchemaReadiness {
-  const missing: string[] = [
-    'Table "articles" (not present; only "posts" exists in Drizzle schema)',
-    'Unique index on canonical URL and/or RSS guid for idempotent upserts',
-    'Column to store original RSS guid (posts has no guid field)',
-    'Column to store canonical archive URL (posts uses slug + app origin only)',
-    'Column for imported HTML or MDX body (posts has teaser/email fields, not article body)',
-  ];
-  return { ready: false, missing };
+export function assessPostsArchiveSchemaReadiness(): PostsSchemaReadiness {
+  return { ready: true, missing: [] };
 }
