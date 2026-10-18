@@ -22,6 +22,7 @@ import {
 import { setPaymentsEnabledForTests as setFlag } from "@/lib/payments/feature-flag";
 import { CRTVAI_TOKEN_ADDRESS } from "@/lib/payments/metoken-curve-config";
 import {
+  ChainTxUnavailableError,
   resetChainTxReaderForTests,
   setChainTxReaderForTests,
   type CrtvaiTransferObservation,
@@ -37,7 +38,6 @@ import {
 import { signSubscriptionQuote } from "@/lib/payments/subscription-quote-sign";
 import { SUBSCRIPTION_QUOTE_SLIPPAGE_BPS } from "@/lib/payments/metoken-curve-config";
 import { BASE_CHAIN_ID } from "@/lib/payments/metoken-curve-config";
-import { ChainTxUnavailableError } from "@/lib/payments/subscription-chain-read";
 import { POST } from "./route";
 
 const QUOTE_SIGNING_SECRET = "test-quote-signing-secret-key-32bytes!!";
@@ -173,8 +173,8 @@ describe("POST /api/subscriptions/verify", () => {
   });
 
   it("returns 503 when quote signing is not configured", async () => {
-    vi.stubEnv("QUOTE_SIGNING_SECRET", "too-short");
     const { quoteId } = await seedQuote();
+    vi.stubEnv("QUOTE_SIGNING_SECRET", "too-short");
     const response = await verifyRequest(quoteId);
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({
