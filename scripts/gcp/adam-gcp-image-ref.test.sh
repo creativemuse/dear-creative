@@ -40,4 +40,18 @@ assert_fail "us-east4-docker.pkg.dev/creative-ai-491118/dear-creative/adam"
 assert_fail "${VALID}:extra"
 assert_fail "us-east4-docker.pkg.dev/creative-ai-491118/dear-creative/adam@sha256:abc"
 
+export GCP_PROJECT_ID=creative-ai-491118
+export GCP_REGION=us-east4
+repo="$(adam_gcp_default_adam_image_repo)"
+if [[ "${repo}" != "us-east4-docker.pkg.dev/creative-ai-491118/dear-creative/adam" ]]; then
+  echo "Expected default repo from GCP_REGION=us-east4, got: ${repo}" >&2
+  exit 1
+fi
+export GCP_REGION=europe-west1
+repo="$(adam_gcp_default_adam_image_repo)"
+if [[ "${repo}" != "europe-west1-docker.pkg.dev/creative-ai-491118/dear-creative/adam" ]]; then
+  echo "Expected repo from GCP_REGION=europe-west1, got: ${repo}" >&2
+  exit 1
+fi
+
 echo "Adam GCP image ref validation OK"

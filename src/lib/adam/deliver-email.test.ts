@@ -123,6 +123,7 @@ describe("sendNewsletterEmail", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     for (const key of Object.keys(process.env)) {
       if (!(key in envSnapshot)) {
         delete process.env[key];
@@ -334,6 +335,8 @@ describe("sendNewsletterEmail", () => {
   });
 
   it("includes per-recipient List-Unsubscribe headers built from NEXT_PUBLIC_SITE_URL", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-06-15T12:00:00.000Z"));
     process.env.RESEND_LIVE = "true";
     batchSend.mockResolvedValue({
       data: { data: [{ id: "email-id-1" }] },

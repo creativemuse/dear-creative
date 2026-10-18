@@ -50,7 +50,7 @@ Optional: set `ADAM_CLOUD_BUILD_SA` in `adam-gcp.env` so build/deploy scripts pa
 
 ## Container image (Artifact Registry)
 
-- **Repository:** `us-east4-docker.pkg.dev/<GCP_PROJECT_ID>/dear-creative/adam`
+- **Repository:** `<GCP_REGION>-docker.pkg.dev/<GCP_PROJECT_ID>/dear-creative/adam` (region from **`GCP_REGION`**, default `us-east4`)
 - **Default deploy:** digest-pinned `--image` (via **`ADAM_IMAGE`** or **`--image`**). Tags without a digest are rejected unless **`--allow-tag`** is passed.
 - **Example (current pushed image):** `us-east4-docker.pkg.dev/creative-ai-491118/dear-creative/adam@sha256:f91355e979fc57fead5d6a0f7787bcbfc4b9fbfb9380e7601340a76406b1d76d`
 - **Rollback:** redeploy the previous digest (keep the last known-good `@sha256:…` and run `adam-deploy-cloud-run.sh --image …` again). Cloud Run revisions are immutable per image pin.
@@ -58,7 +58,7 @@ Optional: set `ADAM_CLOUD_BUILD_SA` in `adam-gcp.env` so build/deploy scripts pa
 
 ## Cost guardrails
 
-- `min-instances=0`, `max-instances=2`, `512Mi` RAM, `1` CPU
+- `min-instances=0`, `max-instances=2`, **`1Gi` RAM** (override with **`ADAM_MEMORY`** in `adam-gcp.env`), `1` CPU
 - `RESEND_LIVE=false`, `PAYMENTS_ENABLED=false` on the Cloud Run service
 - Gemini via **Vertex AI** (`GOOGLE_GENAI_USE_VERTEXAI=1`) and `roles/aiplatform.user` on the runtime SA (no API key secret required when using ADC)
 - No DNS changes to `news.creativeplatform.xyz`
@@ -81,7 +81,7 @@ The token must match `ADAM_API_TOKEN` on the Dear Creative web app deployment.
 3. `./scripts/gcp/adam-bootstrap-service-account.sh` (or `./scripts/gcp/adam-bootstrap-service-account.sh --project <id>`)
 4. Add secret **versions** (interactive; values never committed).
 5. Build and push: `./scripts/gcp/adam-build-image.sh` (prints a digest-pinned URI).
-6. Deploy that digest: `ADAM_IMAGE=<uri@sha256:…> ./scripts/gcp/adam-deploy-cloud-run.sh` or `./scripts/gcp/adam-deploy-cloud-run.sh --image <uri@sha256:…>`.
+6. Deploy that digest: `ADAM_IMAGE=<uri@sha256:…> ./scripts/gcp/adam-deploy-cloud-run.sh` or `./scripts/gcp/adam-deploy-cloud-run.sh --image <uri@sha256:…>`. Optional: `ADAM_MEMORY=2Gi` for a larger Cloud Run limit.
 7. Smoke draft (approval queue only, no send): export the two env vars locally, then `./scripts/gcp/adam-smoke-draft-remote.sh`
 
 ## Prod image boot proof (local)
@@ -92,7 +92,7 @@ CI and operators can verify the container starts without deploying:
 GCP_PROJECT_ID=local-boot-proof ./scripts/gcp/adam-docker-boot-proof.sh
 ```
 
-Requires Docker. The script still requires a **project id** (no default) but does not call GCP. It builds `services/adam`, runs with test env vars, and checks for the ADK start log.
+Requires Docker. The script still requires a **project id** (no default) but does not call GCP. It builds `services/adam`, runs with test env vars, and checks for the ADK start log. The prod image binds **`0.0.0.0:$PORT`** (default **8080**) so Cloud Run startup probes reach the ADK server.
 
 ## Local dev
 
@@ -103,8 +103,11 @@ export DEAR_CREATIVE_API_BASE_URL=http://localhost:3000
 export ADAM_API_TOKEN=...
 export RESEND_LIVE=false
 export PAYMENTS_ENABLED=false
+export PORT=8080
 npm start
 ```
+
+`npm start` runs the ADK API server on **`0.0.0.0`** and **`PORT`** (default **8080**), matching the Cloud Run container.
 
 ## Cloud Agent note
 

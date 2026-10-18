@@ -11,7 +11,7 @@
     "build:agent": "tsc --noEmit -p tsconfig.agent.json",
     "build:prod": "tsc -p tsconfig.build.json",
     "test": "vitest run",
-    "start": "npx @google/adk-devtools api_server . --port ${PORT:-8080}",
+    "start": "npx @google/adk-devtools api_server . --port ${PORT:-8080} --host 0.0.0.0",
     "smoke:draft": "npm run build:prod && node dist/src/smoke-draft.js"
   },
   "dependencies": {
