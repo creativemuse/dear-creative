@@ -258,7 +258,7 @@ export function buildImportCandidates(
   return candidates;
 }
 
-function samePostArchive(
+export function samePostArchive(
   existing: PostArchiveUpsertRow,
   incoming: PostArchiveUpsertRow,
 ): boolean {
@@ -430,17 +430,23 @@ export function buildExistingPostIndex(
   return { byGuid, byCanonical, bySlug };
 }
 
-export async function runArchiveImportDryRun(input: {
+export async function collectArchiveImportRows(input: {
   fetch?: FetchLike;
   rssUrl?: string;
   indexUrl?: string;
   archiveUrl?: string;
   siteOrigin?: string;
-  existing?: ExistingPostIndex;
-  schemaReady: boolean;
-  schemaMissing: string[];
   fetchBodies?: boolean;
-}): Promise<ArchiveImportSummary> {
+}): Promise<{
+  postRows: PostArchiveUpsertRow[];
+  feedItems: number;
+  homeIndexItems: number;
+  archivePageItems: number;
+  archiveItems: number;
+  matches: number;
+  feedOnly: number;
+  archiveOnly: number;
+}> {
   const fetchFn = input.fetch ?? globalThis.fetch.bind(globalThis);
   const rssUrl = input.rssUrl ?? DEFAULT_RSS_URL;
   const indexUrl = input.indexUrl ?? DEFAULT_INDEX_URL;
@@ -483,25 +489,57 @@ export async function runArchiveImportDryRun(input: {
   const postRows = await candidatesToPostRows(candidates, fetchFn, {
     fetchBodies: input.fetchBodies ?? true,
   });
-  const existing =
-    input.existing ??
-    buildExistingPostIndex([]);
-  const plan = planPostArchiveUpserts(postRows, existing);
 
   return {
+    postRows,
     feedItems: feed.length,
     homeIndexItems: homeIndex.length,
     archivePageItems: archivePage.length,
     archiveItems: listing.length,
-    importItems: postRows.length,
     matches,
+    feedOnly,
+    archiveOnly,
+  };
+}
+
+export async function runArchiveImportDryRun(input: {
+  fetch?: FetchLike;
+  rssUrl?: string;
+  indexUrl?: string;
+  archiveUrl?: string;
+  siteOrigin?: string;
+  existing?: ExistingPostIndex;
+  schemaReady: boolean;
+  schemaMissing: string[];
+  fetchBodies?: boolean;
+}): Promise<ArchiveImportSummary> {
+  const collected = await collectArchiveImportRows({
+    fetch: input.fetch,
+    rssUrl: input.rssUrl,
+    indexUrl: input.indexUrl,
+    archiveUrl: input.archiveUrl,
+    siteOrigin: input.siteOrigin,
+    fetchBodies: input.fetchBodies,
+  });
+  const existing =
+    input.existing ??
+    buildExistingPostIndex([]);
+  const plan = planPostArchiveUpserts(collected.postRows, existing);
+
+  return {
+    feedItems: collected.feedItems,
+    homeIndexItems: collected.homeIndexItems,
+    archivePageItems: collected.archivePageItems,
+    archiveItems: collected.archiveItems,
+    importItems: collected.postRows.length,
+    matches: collected.matches,
     wouldInsert: plan.wouldInsert,
     wouldUpdate: plan.wouldUpdate,
     wouldSkip: plan.wouldSkip,
     wouldSlugConflict: plan.wouldSlugConflict,
     wouldIdentityConflict: plan.wouldIdentityConflict,
-    feedOnly,
-    archiveOnly,
+    feedOnly: collected.feedOnly,
+    archiveOnly: collected.archiveOnly,
     schemaReady: input.schemaReady,
     schemaMissing: input.schemaMissing,
   };
