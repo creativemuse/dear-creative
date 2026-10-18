@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SubscriptionPlan } from "@/db/schema";
 import {
+  QuoteSigningNotConfiguredError,
   signSubscriptionQuote,
   verifySubscriptionQuoteSignature,
   type SubscriptionQuoteSignFields,
 } from "./subscription-quote-sign";
+
+const VALID_SECRET = "test-quote-signing-secret-key-32bytes!!";
 
 const baseFields = (): SubscriptionQuoteSignFields => ({
   quoteId: "quote-1",
@@ -23,7 +26,7 @@ const baseFields = (): SubscriptionQuoteSignFields => ({
 
 describe("subscription quote signing", () => {
   beforeEach(() => {
-    vi.stubEnv("QUOTE_SIGNING_SECRET", "test-quote-signing-secret-key");
+    vi.stubEnv("QUOTE_SIGNING_SECRET", VALID_SECRET);
   });
 
   afterEach(() => {
@@ -44,6 +47,28 @@ describe("subscription quote signing", () => {
         { ...fields, usdCents: 801 },
         signature,
       ),
+    ).toBe(false);
+  });
+
+  it("returns false when QUOTE_SIGNING_SECRET is missing", () => {
+    vi.stubEnv("QUOTE_SIGNING_SECRET", "");
+    const fields = baseFields();
+    expect(() => signSubscriptionQuote(fields)).toThrow(
+      QuoteSigningNotConfiguredError,
+    );
+    expect(
+      verifySubscriptionQuoteSignature(fields, "any-signature"),
+    ).toBe(false);
+  });
+
+  it("returns false when QUOTE_SIGNING_SECRET is too short", () => {
+    vi.stubEnv("QUOTE_SIGNING_SECRET", "short-secret");
+    const fields = baseFields();
+    expect(() => signSubscriptionQuote(fields)).toThrow(
+      QuoteSigningNotConfiguredError,
+    );
+    expect(
+      verifySubscriptionQuoteSignature(fields, "any-signature"),
     ).toBe(false);
   });
 });

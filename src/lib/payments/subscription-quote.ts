@@ -20,10 +20,11 @@ import {
 } from "./metoken-curve-math";
 import type { MeTokenCurveReader } from "./metoken-curve-read";
 import { resolveSubscriptionPayerAddress } from "./smart-account";
+import { MeTokenCurveUnavailableError } from "./metoken-curve-read";
 import {
+  isQuoteSigningConfigured,
   signSubscriptionQuote,
   type SubscriptionQuoteSignFields,
-  verifySubscriptionQuoteSignature,
 } from "./subscription-quote-sign";
 import { usdCentsForPlan, usdc6FromUsdCents } from "./subscription-pricing";
 
@@ -74,7 +75,6 @@ export function parseSubscriptionPlan(value: unknown): SubscriptionPlan | null {
 export async function assertCurveStability(
   db: DearCreativeDb,
   input: {
-    privyUserId: string;
     writerId: string;
     plan: SubscriptionPlan;
     freshCurveOutputWei: bigint;
@@ -91,7 +91,6 @@ export async function assertCurveStability(
     .from(subscriptionQuotes)
     .where(
       and(
-        eq(subscriptionQuotes.privyUserId, input.privyUserId),
         eq(subscriptionQuotes.writerId, input.writerId),
         eq(subscriptionQuotes.plan, input.plan),
         gt(subscriptionQuotes.createdAt, windowStart),
@@ -123,6 +122,14 @@ export async function createSubscriptionQuote(
 ): Promise<SubscriptionQuoteResponse> {
   const nowMs = options?.nowMs ?? Date.now();
 
+  if (!isQuoteSigningConfigured()) {
+    throw new SubscriptionQuoteError(
+      "quote_signing_unavailable",
+      "Quote signing is not configured",
+      503,
+    );
+  }
+
   const [writer] = await db
     .select()
     .from(writers)
@@ -147,8 +154,20 @@ export async function createSubscriptionQuote(
 
   const usdCents = usdCentsForPlan(input.plan);
   const usdc6 = usdc6FromUsdCents(usdCents);
-  const curveOutputWei =
-    await curveReader.readMeTokensMintedForDeposit(usdc6);
+  let curveOutputWei: bigint;
+  try {
+    curveOutputWei =
+      await curveReader.readMeTokensMintedForDeposit(usdc6);
+  } catch (error) {
+    if (error instanceof MeTokenCurveUnavailableError) {
+      throw new SubscriptionQuoteError(
+        "curve_unavailable",
+        error.message,
+        503,
+      );
+    }
+    throw error;
+  }
 
   if (curveOutputWei <= BigInt(0)) {
     throw new SubscriptionQuoteError(
@@ -159,7 +178,6 @@ export async function createSubscriptionQuote(
   }
 
   await assertCurveStability(db, {
-    privyUserId: input.privyUserId,
     writerId: input.writerId,
     plan: input.plan,
     freshCurveOutputWei: curveOutputWei,
@@ -194,16 +212,6 @@ export async function createSubscriptionQuote(
 
   const signature = signSubscriptionQuote(signFields);
 
-  if (
-    !verifySubscriptionQuoteSignature(signFields, signature)
-  ) {
-    throw new SubscriptionQuoteError(
-      "quote_signing_failed",
-      "Could not sign subscription quote",
-      500,
-    );
-  }
-
   await db.insert(subscriptionQuotes).values({
     id: quoteId,
     privyUserId: input.privyUserId,
@@ -235,4 +243,4 @@ export async function createSubscriptionQuote(
   };
 }
 
-export { verifySubscriptionQuoteSignature };
+export { verifySubscriptionQuoteSignature } from "./subscription-quote-sign";

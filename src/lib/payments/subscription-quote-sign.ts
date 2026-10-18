@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SubscriptionPlan } from "@/db/schema";
 
+export const MIN_QUOTE_SIGNING_SECRET_BYTES = 32;
+
 export type SubscriptionQuoteSignFields = {
   quoteId: string;
   privyUserId: string;
@@ -16,9 +18,18 @@ export type SubscriptionQuoteSignFields = {
   chainId: number;
 };
 
+export class QuoteSigningNotConfiguredError extends Error {
+  constructor() {
+    super("QUOTE_SIGNING_SECRET is missing or too short");
+  }
+}
+
 function signingSecret(): string | null {
   const raw = process.env.QUOTE_SIGNING_SECRET?.trim();
-  return raw && raw.length >= 16 ? raw : null;
+  if (!raw || raw.length < MIN_QUOTE_SIGNING_SECRET_BYTES) {
+    return null;
+  }
+  return raw;
 }
 
 export function isQuoteSigningConfigured(): boolean {
@@ -46,10 +57,10 @@ export function signSubscriptionQuote(
   fields: SubscriptionQuoteSignFields,
 ): string {
   const secret = signingSecret();
-  const payload = buildPayload(fields);
   if (!secret) {
-    return `unsigned:${Buffer.from(payload).toString("base64url")}`;
+    throw new QuoteSigningNotConfiguredError();
   }
+  const payload = buildPayload(fields);
   return createHmac("sha256", secret)
     .update(payload)
     .digest("base64url");
@@ -59,12 +70,19 @@ export function verifySubscriptionQuoteSignature(
   fields: SubscriptionQuoteSignFields,
   signature: string,
 ): boolean {
-  const expected = signSubscriptionQuote(fields);
+  const secret = signingSecret();
+  if (!secret) {
+    return false;
+  }
+  const payload = buildPayload(fields);
+  const expected = createHmac("sha256", secret)
+    .update(payload)
+    .digest("base64url");
   try {
     const a = Buffer.from(signature);
     const b = Buffer.from(expected);
     return a.length === b.length && timingSafeEqual(a, b);
   } catch {
-    return signature === expected;
+    return false;
   }
 }
