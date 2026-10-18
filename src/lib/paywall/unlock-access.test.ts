@@ -6,6 +6,7 @@ import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DearCreativeDb } from "@/db/client";
 import * as schema from "@/db/schema";
 import { posts, subscriptions, unlocks, writers } from "@/db/schema";
 import { DEFAULT_DEAR_QUALIFYING_LOCKS } from "./dear-qualifying-locks-config";
@@ -22,18 +23,18 @@ import {
   resolvePaywallAccess,
 } from "./unlock-access";
 
-let testDb: ReturnType<typeof drizzle>;
+let testDb: DearCreativeDb;
 
 const WALLET = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const PRIVY = "did:privy:access-test";
 
-async function createTestDb() {
+async function createTestDb(): Promise<DearCreativeDb> {
   const dir = mkdtempSync(join(tmpdir(), "dear-paywall-access-"));
   const url = `file:${join(dir, "test.db")}`;
   const client = createClient({ url });
   const db = drizzle({ client, schema });
   await migrate(db, { migrationsFolder: "./drizzle" });
-  return db;
+  return db as DearCreativeDb;
 }
 
 describe("paywall entitlements", () => {
