@@ -17,7 +17,7 @@ import {
   subscriptionMinConfirmations,
   subscriptionPeriodMs,
 } from "./subscription-config";
-import { allocateGrossCrtvaiWei } from "./subscription-ledger-math";
+import { allocateGrossAmount } from "./subscription-ledger-math";
 import {
   isQuoteSigningConfigured,
   verifyStoredQuoteSignature,
@@ -290,7 +290,9 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  const { writerWei, platformWei } = allocateGrossCrtvaiWei(transfer.value);
+  const { writerAmountRaw, platformAmountRaw } = allocateGrossAmount(
+    transfer.value,
+  );
   const ledgerId = randomUUID();
   const subscriptionId = randomUUID();
   const periodMs = subscriptionPeriodMs(quote.plan);
@@ -304,8 +306,8 @@ export async function verifySubscriptionPayment(
         txHash,
         quoteId: quote.id,
         grossAmountRaw: transfer.value.toString(),
-        writerAmountRaw: writerWei.toString(),
-        platformAmountRaw: platformWei.toString(),
+        writerAmountRaw: writerAmountRaw.toString(),
+        platformAmountRaw: platformAmountRaw.toString(),
         splitAddress: payeeAddress.toLowerCase(),
         tokenAddress: quotedTokenAddress.toLowerCase(),
         tokenDecimals: quote.tokenDecimals,

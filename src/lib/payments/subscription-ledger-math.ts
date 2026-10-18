@@ -3,11 +3,11 @@
  *
  * Platform share is exactly 10% floored; the writer receives the remainder (≥ 90%).
  */
-export function allocateGrossCrtvaiWei(grossWei: bigint): {
-  writerWei: bigint;
-  platformWei: bigint;
+export function allocateGrossAmount(grossAmount: bigint): {
+  writerAmountRaw: bigint;
+  platformAmountRaw: bigint;
 } {
-  const platformWei = (grossWei * BigInt(10)) / BigInt(100);
-  const writerWei = grossWei - platformWei;
-  return { writerWei, platformWei };
+  const platformAmountRaw = (grossAmount * BigInt(10)) / BigInt(100);
+  const writerAmountRaw = grossAmount - platformAmountRaw;
+  return { writerAmountRaw, platformAmountRaw };
 }
