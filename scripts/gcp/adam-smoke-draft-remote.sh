@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${ROOT}/scripts/gcp/adam-gcp.env"
 
 cd "${ROOT}/services/adam"
-npm ci --omit=dev
+npm ci
 npm run build:prod
 
 export RESEND_LIVE=false
