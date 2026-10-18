@@ -10,9 +10,9 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import {
-  CRTVAI_TOKEN_ADDRESS,
-  METOKEN_CURVE_RPC_TIMEOUT_MS,
-} from "./metoken-curve-config";
+  BASE_USDC_ADDRESS,
+  SUBSCRIPTION_RPC_TIMEOUT_MS,
+} from "./subscription-config";
 
 export type Erc20TransferObservation = {
   from: Address;
@@ -24,9 +24,6 @@ export type Erc20TransferObservation = {
   logEmitter: Address;
 };
 
-/** @deprecated Use Erc20TransferObservation */
-export type CrtvaiTransferObservation = Erc20TransferObservation;
-
 export class ChainTxUnavailableError extends Error {
   constructor() {
     super("Transaction verification is temporarily unavailable.");
@@ -34,10 +31,9 @@ export class ChainTxUnavailableError extends Error {
 }
 
 export type ChainTxReader = {
-  fetchErc20Transfer(
+  fetchUsdcTransfer(
     txHash: Hash,
     minConfirmations: number,
-    tokenAddress: Address,
     payee: Address,
     allowedFromAddresses: readonly Address[],
   ): Promise<Erc20TransferObservation>;
@@ -64,9 +60,26 @@ function createBaseClient() {
   return createPublicClient({
     chain: base,
     transport: http(alchemyRpcUrl(), {
-      timeout: METOKEN_CURVE_RPC_TIMEOUT_MS,
+      timeout: SUBSCRIPTION_RPC_TIMEOUT_MS,
     }),
   });
+}
+
+export function extractUsdcTransferFromReceipt(
+  receipt: TransactionReceipt,
+  blockTimestampSec: number,
+  confirmations: number,
+  payee: Address,
+  allowedFromAddresses: readonly Address[],
+): Erc20TransferObservation {
+  return extractErc20TransferFromReceipt(
+    receipt,
+    blockTimestampSec,
+    confirmations,
+    BASE_USDC_ADDRESS,
+    payee,
+    allowedFromAddresses,
+  );
 }
 
 export function extractErc20TransferFromReceipt(
@@ -123,38 +136,18 @@ export function extractErc20TransferFromReceipt(
   };
 }
 
-/** @deprecated Use extractErc20TransferFromReceipt */
-export function extractCrtvaiTransferFromReceipt(
-  receipt: TransactionReceipt,
-  blockTimestampSec: number,
-  confirmations: number,
-  payee: Address,
-  allowedFromAddresses: readonly Address[],
-): Erc20TransferObservation {
-  return extractErc20TransferFromReceipt(
-    receipt,
-    blockTimestampSec,
-    confirmations,
-    CRTVAI_TOKEN_ADDRESS,
-    payee,
-    allowedFromAddresses,
-  );
-}
-
 function isExpectedChainError(message: string): boolean {
   return (
     message === "insufficient_confirmations" ||
     message === "token_transfer_missing" ||
-    message === "crtvai_transfer_missing" ||
     message === "transaction_not_successful" ||
     message === "receipt_not_found"
   );
 }
 
-async function fetchErc20TransferLive(
+async function fetchUsdcTransferLive(
   txHash: Hash,
   minConfirmations: number,
-  tokenAddress: Address,
   payee: Address,
   allowedFromAddresses: readonly Address[],
 ): Promise<Erc20TransferObservation> {
@@ -175,11 +168,10 @@ async function fetchErc20TransferLive(
       throw new Error("insufficient_confirmations");
     }
 
-    return extractErc20TransferFromReceipt(
+    return extractUsdcTransferFromReceipt(
       receipt,
       Number(block.timestamp),
       confirmations,
-      tokenAddress,
       payee,
       allowedFromAddresses,
     );
@@ -195,19 +187,17 @@ async function fetchErc20TransferLive(
   }
 }
 
-export async function fetchErc20Transfer(
+export async function fetchUsdcTransfer(
   txHash: Hash,
   minConfirmations: number,
-  tokenAddress: Address,
   payee: Address,
   allowedFromAddresses: readonly Address[],
 ): Promise<Erc20TransferObservation> {
   if (chainReaderOverride !== undefined && chainReaderOverride !== null) {
     try {
-      return await chainReaderOverride.fetchErc20Transfer(
+      return await chainReaderOverride.fetchUsdcTransfer(
         txHash,
         minConfirmations,
-        tokenAddress,
         payee,
         allowedFromAddresses,
       );
@@ -222,25 +212,9 @@ export async function fetchErc20Transfer(
       throw new ChainTxUnavailableError();
     }
   }
-  return fetchErc20TransferLive(
+  return fetchUsdcTransferLive(
     txHash,
     minConfirmations,
-    tokenAddress,
-    payee,
-    allowedFromAddresses,
-  );
-}
-
-export async function fetchCrtvaiTransfer(
-  txHash: Hash,
-  minConfirmations: number,
-  payee: Address,
-  allowedFromAddresses: readonly Address[],
-): Promise<Erc20TransferObservation> {
-  return fetchErc20Transfer(
-    txHash,
-    minConfirmations,
-    CRTVAI_TOKEN_ADDRESS,
     payee,
     allowedFromAddresses,
   );

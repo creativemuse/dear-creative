@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
 import {
   subscriptionPlanEnum,
@@ -7,27 +7,19 @@ import {
   writers,
   type SubscriptionPlan,
 } from "@/db/schema";
-import {
-  BASE_CHAIN_ID,
-  SUBSCRIPTION_CURVE_STABILITY_MAX_BPS,
-  SUBSCRIPTION_CURVE_STABILITY_WINDOW_MS,
-  SUBSCRIPTION_QUOTE_EXPIRY_SECONDS,
-  SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
-} from "./metoken-curve-config";
-import {
-  applySlippageMinCrtvaiWei,
-  curveOutputDeltaBps,
-} from "./metoken-curve-math";
-import type { MeTokenCurveReader } from "./metoken-curve-read";
 import { resolveSubscriptionPayerAddress } from "./smart-account";
-import { MeTokenCurveUnavailableError } from "./metoken-curve-read";
 import {
   isQuoteSigningConfigured,
   signSubscriptionQuote,
   type SubscriptionQuoteSignFields,
 } from "./subscription-quote-sign";
-import { usdCentsForPlan, usdc6FromUsdCents } from "./subscription-pricing";
-import { resolvePaymentTokenForQuote } from "./payment-token-config";
+import { usdCentsForPlan } from "./subscription-pricing";
+import {
+  BASE_CHAIN_ID,
+  BASE_USDC_ADDRESS,
+  SUBSCRIPTION_QUOTE_EXPIRY_SECONDS,
+  USDC_DECIMALS,
+} from "./subscription-config";
 import { dearPlatformTreasuryAddress } from "./subscription-config";
 import { usdcSubscriptionAmountUnits } from "./subscription-usdc-pricing";
 import { verifyWriterSplit } from "./writer-split-verify";
@@ -47,15 +39,12 @@ export type SubscriptionQuoteResponse = {
   plan: SubscriptionPlan;
   writerId: string;
   usdCents: number;
-  curveOutputWei: string;
-  minCrtvaiWei: string;
+  minAmountRaw: string;
   payee: string;
   tokenAddress: string;
   tokenDecimals: number;
-  paymentToken: "usdc" | "crtvai";
   payerAddress: string;
   signerAddress: string;
-  slippageBps: number;
   expiresAt: string;
 };
 
@@ -80,51 +69,8 @@ export function parseSubscriptionPlan(value: unknown): SubscriptionPlan | null {
   return null;
 }
 
-export async function assertCurveStability(
-  db: DearCreativeDb,
-  input: {
-    writerId: string;
-    plan: SubscriptionPlan;
-    freshCurveOutputWei: bigint;
-    nowMs: number;
-  },
-): Promise<void> {
-  const windowStart = new Date(
-    input.nowMs - SUBSCRIPTION_CURVE_STABILITY_WINDOW_MS,
-  );
-  const [recent] = await db
-    .select({
-      curveOutputWei: subscriptionQuotes.curveOutputWei,
-    })
-    .from(subscriptionQuotes)
-    .where(
-      and(
-        eq(subscriptionQuotes.writerId, input.writerId),
-        eq(subscriptionQuotes.plan, input.plan),
-        gt(subscriptionQuotes.createdAt, windowStart),
-      ),
-    )
-    .orderBy(desc(subscriptionQuotes.createdAt))
-    .limit(1);
-
-  if (!recent) {
-    return;
-  }
-
-  const previous = BigInt(recent.curveOutputWei);
-  const deltaBps = curveOutputDeltaBps(previous, input.freshCurveOutputWei);
-  if (deltaBps > SUBSCRIPTION_CURVE_STABILITY_MAX_BPS) {
-    throw new SubscriptionQuoteError(
-      "quote_curve_unstable",
-      "CRTVAI curve price moved more than 20% since your last quote — try again later.",
-      409,
-    );
-  }
-}
-
 export async function createSubscriptionQuote(
   db: DearCreativeDb,
-  curveReader: MeTokenCurveReader,
   input: SubscriptionQuoteRequest,
   options?: { nowMs?: number },
 ): Promise<SubscriptionQuoteResponse> {
@@ -134,15 +80,6 @@ export async function createSubscriptionQuote(
     throw new SubscriptionQuoteError(
       "quote_signing_unavailable",
       "Quote signing is not configured",
-      503,
-    );
-  }
-
-  const paymentToken = resolvePaymentTokenForQuote();
-  if (!paymentToken) {
-    throw new SubscriptionQuoteError(
-      "payment_token_invalid",
-      "PAYMENT_TOKEN must be usdc or crtvai",
       503,
     );
   }
@@ -192,49 +129,8 @@ export async function createSubscriptionQuote(
   }
 
   const usdCents = usdCentsForPlan(input.plan);
-  let curveOutputWei: bigint;
-  let minCrtvaiWei: bigint;
-
-  if (paymentToken.rail === "usdc") {
-    const amount = usdcSubscriptionAmountUnits(input.plan);
-    curveOutputWei = amount;
-    minCrtvaiWei = amount;
-  } else {
-    const usdc6 = usdc6FromUsdCents(usdCents);
-    try {
-      curveOutputWei =
-        await curveReader.readMeTokensMintedForDeposit(usdc6);
-    } catch (error) {
-      if (error instanceof MeTokenCurveUnavailableError) {
-        throw new SubscriptionQuoteError(
-          "curve_unavailable",
-          error.message,
-          503,
-        );
-      }
-      throw error;
-    }
-
-    if (curveOutputWei <= BigInt(0)) {
-      throw new SubscriptionQuoteError(
-        "quote_unpayable",
-        "CRTVAI curve returned zero for this subscription price",
-        502,
-      );
-    }
-
-    await assertCurveStability(db, {
-      writerId: input.writerId,
-      plan: input.plan,
-      freshCurveOutputWei: curveOutputWei,
-      nowMs,
-    });
-
-    minCrtvaiWei = applySlippageMinCrtvaiWei(
-      curveOutputWei,
-      SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
-    );
-  }
+  const minAmountRaw = usdcSubscriptionAmountUnits(input.plan);
+  const tokenAddress = getAddress(BASE_USDC_ADDRESS);
 
   const { signer, payer } = resolveSubscriptionPayerAddress(input.signerWallet);
   const payee = writer.payoutSplitAddress.toLowerCase();
@@ -249,13 +145,11 @@ export async function createSubscriptionQuote(
     writerId: input.writerId,
     plan: input.plan,
     usdCents,
-    minCrtvaiWei,
-    curveOutputWei,
+    minAmountRaw,
     payee,
-    tokenAddress: paymentToken.tokenAddress.toLowerCase(),
-    tokenDecimals: paymentToken.decimals,
+    tokenAddress: tokenAddress.toLowerCase(),
+    tokenDecimals: USDC_DECIMALS,
     expiresAtMs,
-    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
   };
 
@@ -268,11 +162,10 @@ export async function createSubscriptionQuote(
     writerId: input.writerId,
     plan: input.plan,
     usdCents,
-    minCrtvaiWei: minCrtvaiWei.toString(),
-    curveOutputWei: curveOutputWei.toString(),
+    minAmountRaw: minAmountRaw.toString(),
     payee,
-    tokenAddress: paymentToken.tokenAddress.toLowerCase(),
-    tokenDecimals: paymentToken.decimals,
+    tokenAddress: tokenAddress.toLowerCase(),
+    tokenDecimals: USDC_DECIMALS,
     expiresAt: new Date(expiresAtMs),
     signature,
   });
@@ -284,15 +177,12 @@ export async function createSubscriptionQuote(
     plan: input.plan,
     writerId: input.writerId,
     usdCents,
-    curveOutputWei: curveOutputWei.toString(),
-    minCrtvaiWei: minCrtvaiWei.toString(),
+    minAmountRaw: minAmountRaw.toString(),
     payee,
-    tokenAddress: paymentToken.tokenAddress,
-    tokenDecimals: paymentToken.decimals,
-    paymentToken: paymentToken.rail,
+    tokenAddress,
+    tokenDecimals: USDC_DECIMALS,
     payerAddress: payer,
     signerAddress: signer,
-    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     expiresAt: new Date(expiresAtMs).toISOString(),
   };
 }

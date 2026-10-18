@@ -889,15 +889,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "min_crtvai_wei": {
-          "name": "min_crtvai_wei",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "curve_output_wei": {
-          "name": "curve_output_wei",
+        "min_amount_raw": {
+          "name": "min_amount_raw",
           "type": "text",
           "primaryKey": false,
           "notNull": true,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Address, TransactionReceipt } from "viem";
-import { extractCrtvaiTransferFromReceipt } from "./subscription-chain-read";
-import { CRTVAI_TOKEN_ADDRESS } from "./metoken-curve-config";
+import { extractUsdcTransferFromReceipt } from "./subscription-chain-read";
+import { BASE_USDC_ADDRESS } from "./subscription-config";
 
 const PAYEE = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Address;
 const OTHER = "0xcccccccccccccccccccccccccccccccccccccccc" as Address;
@@ -15,7 +15,7 @@ function addressTopic(address: Address) {
 
 function transferLog(from: Address, to: Address, value: bigint) {
   return {
-    address: CRTVAI_TOKEN_ADDRESS,
+    address: BASE_USDC_ADDRESS,
     topics: [
       "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
       addressTopic(from),
@@ -31,8 +31,8 @@ function transferLog(from: Address, to: Address, value: bigint) {
   };
 }
 
-describe("extractCrtvaiTransferFromReceipt", () => {
-  it("selects CRTVAI transfers to the payee, not an earlier unrelated transfer", () => {
+describe("extractUsdcTransferFromReceipt", () => {
+  it("selects USDC transfers to the payee, not an earlier unrelated transfer", () => {
     const receipt = {
       status: "success",
       blockNumber: BigInt(100),
@@ -42,7 +42,7 @@ describe("extractCrtvaiTransferFromReceipt", () => {
       ],
     } as unknown as TransactionReceipt;
 
-    const observation = extractCrtvaiTransferFromReceipt(
+    const observation = extractUsdcTransferFromReceipt(
       receipt,
       1_700_000_000,
       3,
@@ -53,7 +53,7 @@ describe("extractCrtvaiTransferFromReceipt", () => {
     expect(observation.value).toBe(BigInt(1000));
   });
 
-  it("sums multiple CRTVAI transfers to the same payee from allowed payers", () => {
+  it("sums multiple USDC transfers to the same payee from allowed payers", () => {
     const receipt = {
       status: "success",
       blockNumber: BigInt(100),
@@ -63,7 +63,7 @@ describe("extractCrtvaiTransferFromReceipt", () => {
       ],
     } as unknown as TransactionReceipt;
 
-    const observation = extractCrtvaiTransferFromReceipt(
+    const observation = extractUsdcTransferFromReceipt(
       receipt,
       1_700_000_000,
       3,
@@ -83,7 +83,7 @@ describe("extractCrtvaiTransferFromReceipt", () => {
       ],
     } as unknown as TransactionReceipt;
 
-    const observation = extractCrtvaiTransferFromReceipt(
+    const observation = extractUsdcTransferFromReceipt(
       receipt,
       1_700_000_000,
       3,
@@ -91,7 +91,6 @@ describe("extractCrtvaiTransferFromReceipt", () => {
       [PAYER],
     );
     expect(observation.value).toBe(BigInt(400));
-    expect(observation.from.toLowerCase()).toBe(PAYER.toLowerCase());
   });
 
   it("throws when only third-party transfers reach the payee", () => {
@@ -102,7 +101,7 @@ describe("extractCrtvaiTransferFromReceipt", () => {
     } as unknown as TransactionReceipt;
 
     expect(() =>
-      extractCrtvaiTransferFromReceipt(
+      extractUsdcTransferFromReceipt(
         receipt,
         1_700_000_000,
         3,

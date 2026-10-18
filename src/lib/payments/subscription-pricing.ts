@@ -8,7 +8,3 @@ export const SUBSCRIPTION_USD_CENTS: Record<SubscriptionPlan, number> = {
 export function usdCentsForPlan(plan: SubscriptionPlan): number {
   return SUBSCRIPTION_USD_CENTS[plan];
 }
-
-export function usdc6FromUsdCents(usdCents: number): bigint {
-  return BigInt(usdCents) * BigInt(10_000);
-}

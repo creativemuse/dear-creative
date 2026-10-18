@@ -25,14 +25,9 @@ import {
 import {
   BASE_USDC_ADDRESS,
   SUBSCRIPTION_QUOTE_EXPIRY_SECONDS,
-  SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
-} from "@/lib/payments/metoken-curve-config";
+  USDC_DECIMALS,
+} from "@/lib/payments/subscription-config";
 import { usdcSubscriptionAmountUnits } from "@/lib/payments/subscription-usdc-pricing";
-import {
-  MeTokenCurveUnavailableError,
-  setMeTokenCurveReaderForTests,
-  resetMeTokenCurveReaderForTests,
-} from "@/lib/payments/metoken-curve-read";
 import {
   verifySubscriptionQuoteSignature,
   type SubscriptionQuoteSignFields,
@@ -67,12 +62,6 @@ async function createTestDb() {
   return db;
 }
 
-function mockCurveMinted(wei: bigint) {
-  setMeTokenCurveReaderForTests({
-    readMeTokensMintedForDeposit: vi.fn().mockResolvedValue(wei),
-  });
-}
-
 function mockImmutableWriterSplit() {
   const expectedSplit = buildSortedDearSplit({
     writerRecipient: WRITER_RECIPIENT,
@@ -96,14 +85,12 @@ describe("POST /api/subscriptions/quote", () => {
       privyUserId: "did:privy:test-user",
       signerAddress: SIGNER,
     }));
-    mockCurveMinted(BigInt("1000000000000000000"));
     mockImmutableWriterSplit();
   });
 
   afterEach(() => {
     setFlag(undefined);
     resetPaymentsLinkedWalletResolverForTests();
-    resetMeTokenCurveReaderForTests();
     resetPullSplitReaderForTests();
     vi.unstubAllEnvs();
     vi.useRealTimers();
@@ -152,11 +139,10 @@ describe("POST /api/subscriptions/quote", () => {
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({
       code: "paid_signup_unavailable",
-      error: "Paid signup unavailable for this writer",
     });
   });
 
-  it("issues a signed quote with expected expiry", async () => {
+  it("issues a signed USDC quote with expected expiry", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2025-01-01T00:00:00.000Z"));
 
@@ -182,16 +168,15 @@ describe("POST /api/subscriptions/quote", () => {
     const body = await response.json();
     expect(body.usdCents).toBe(8000);
     expect(body.payee).toBe(PAYEE_SPLIT.toLowerCase());
+    const expectedUsdc = usdcSubscriptionAmountUnits("yearly");
+    expect(BigInt(body.minAmountRaw)).toBe(expectedUsdc);
+    expect(body.tokenAddress.toLowerCase()).toBe(BASE_USDC_ADDRESS.toLowerCase());
+    expect(body.tokenDecimals).toBe(USDC_DECIMALS);
     expect(body.expiresAt).toBe(
       new Date(
         Date.now() + SUBSCRIPTION_QUOTE_EXPIRY_SECONDS * 1000,
       ).toISOString(),
     );
-
-    const expectedUsdc = usdcSubscriptionAmountUnits("yearly");
-    expect(body.paymentToken).toBe("usdc");
-    expect(BigInt(body.minCrtvaiWei)).toBe(expectedUsdc);
-    expect(body.tokenAddress.toLowerCase()).toBe(BASE_USDC_ADDRESS.toLowerCase());
 
     const signFields: SubscriptionQuoteSignFields = {
       quoteId: body.quoteId,
@@ -200,13 +185,11 @@ describe("POST /api/subscriptions/quote", () => {
       writerId,
       plan: "yearly",
       usdCents: 8000,
-      minCrtvaiWei: expectedUsdc,
-      curveOutputWei: expectedUsdc,
+      minAmountRaw: expectedUsdc,
       payee: PAYEE_SPLIT.toLowerCase(),
       tokenAddress: BASE_USDC_ADDRESS.toLowerCase(),
-      tokenDecimals: 6,
+      tokenDecimals: USDC_DECIMALS,
       expiresAtMs: new Date(body.expiresAt).getTime(),
-      slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
       chainId: 8453,
     };
     expect(verifySubscriptionQuoteSignature(signFields, body.signature)).toBe(
@@ -236,91 +219,5 @@ describe("POST /api/subscriptions/quote", () => {
     expect(await response.json()).toMatchObject({
       code: "quote_signing_unavailable",
     });
-  });
-
-  it("returns 503 when curve pricing is unavailable", async () => {
-    vi.stubEnv("PAYMENT_TOKEN", "crtvai");
-    setMeTokenCurveReaderForTests({
-      readMeTokensMintedForDeposit: vi
-        .fn()
-        .mockRejectedValue(new MeTokenCurveUnavailableError()),
-    });
-    const writerId = randomUUID();
-    await testDb.insert(writers).values({
-      id: writerId,
-      payoutSplitAddress: PAYEE_SPLIT,
-      payoutWalletAddress: WRITER_RECIPIENT,
-    });
-    const response = await POST(
-      new Request("http://localhost/api/subscriptions/quote", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer test-token",
-        },
-        body: JSON.stringify({ plan: "monthly", writerId }),
-      }),
-    );
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ code: "curve_unavailable" });
-  });
-
-  it("rejects when curve output moved more than 20% within 10 minutes", async () => {
-    vi.stubEnv("PAYMENT_TOKEN", "crtvai");
-    const writerId = randomUUID();
-    await testDb.insert(writers).values({
-      id: writerId,
-      payoutSplitAddress: PAYEE_SPLIT,
-      payoutWalletAddress: WRITER_RECIPIENT,
-    });
-
-    mockCurveMinted(BigInt("1000000000000000000"));
-    const first = await POST(
-      new Request("http://localhost/api/subscriptions/quote", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer test-token",
-        },
-        body: JSON.stringify({ plan: "monthly", writerId }),
-      }),
-    );
-    expect(first.status).toBe(200);
-
-    mockCurveMinted(BigInt("1300000000000000000"));
-    const second = await POST(
-      new Request("http://localhost/api/subscriptions/quote", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer test-token",
-        },
-        body: JSON.stringify({ plan: "monthly", writerId }),
-      }),
-    );
-    expect(second.status).toBe(409);
-    expect(await second.json()).toMatchObject({ code: "quote_curve_unstable" });
-  });
-
-  it("returns 503 when PAYMENT_TOKEN is invalid", async () => {
-    vi.stubEnv("PAYMENT_TOKEN", "weth");
-    const writerId = randomUUID();
-    await testDb.insert(writers).values({
-      id: writerId,
-      payoutSplitAddress: PAYEE_SPLIT,
-      payoutWalletAddress: WRITER_RECIPIENT,
-    });
-    const response = await POST(
-      new Request("http://localhost/api/subscriptions/quote", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer test-token",
-        },
-        body: JSON.stringify({ plan: "monthly", writerId }),
-      }),
-    );
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ code: "payment_token_invalid" });
   });
 });

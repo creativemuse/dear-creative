@@ -14,7 +14,11 @@ import {
   subscriptions,
   writers,
 } from "@/db/schema";
-import { CRTVAI_TOKEN_ADDRESS } from "@/lib/payments/metoken-curve-config";
+import {
+  BASE_CHAIN_ID,
+  BASE_USDC_ADDRESS,
+  USDC_DECIMALS,
+} from "@/lib/payments/subscription-config";
 import {
   resetChainTxReaderForTests,
   setChainTxReaderForTests,
@@ -24,7 +28,7 @@ import {
   subscriptionPeriodMs,
 } from "@/lib/payments/subscription-config";
 import { signSubscriptionQuote } from "@/lib/payments/subscription-quote-sign";
-import { SUBSCRIPTION_QUOTE_SLIPPAGE_BPS, BASE_CHAIN_ID } from "@/lib/payments/metoken-curve-config";
+import { usdcSubscriptionAmountUnits } from "@/lib/payments/subscription-usdc-pricing";
 import {
   buildSortedDearSplit,
   computeSplitV2Hash,
@@ -43,6 +47,7 @@ const TREASURY = "0x2222222222222222222222222222222222222222" as const;
 const TX_HASH =
   "0x1111111111111111111111111111111111111111111111111111111111111111" as const;
 const QUOTE_SIGNING_SECRET = "test-quote-signing-secret-key-32bytes!!";
+const MIN_USDC = usdcSubscriptionAmountUnits("monthly");
 
 let testDb: DearCreativeDb;
 let sharedDbUrl: string;
@@ -67,7 +72,6 @@ async function openConcurrentDb(): Promise<DearCreativeDb> {
 async function seedQuote(options?: { activePeriodEnd?: Date }) {
   const writerId = randomUUID();
   const quoteId = randomUUID();
-  const minCrtvaiWei = BigInt("1000000000000000000");
   const privyUserId = "did:privy:test-user";
 
   await testDb.insert(writers).values({
@@ -97,13 +101,11 @@ async function seedQuote(options?: { activePeriodEnd?: Date }) {
     writerId,
     plan: "monthly" as const,
     usdCents: 800,
-    minCrtvaiWei,
-    curveOutputWei: minCrtvaiWei + BigInt(1000),
+    minAmountRaw: MIN_USDC,
     payee: PAYEE_SPLIT.toLowerCase(),
-    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
-    tokenDecimals: 18,
+    tokenAddress: BASE_USDC_ADDRESS.toLowerCase(),
+    tokenDecimals: USDC_DECIMALS,
     expiresAtMs: Date.now() + 5 * 60 * 1000,
-    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
   };
 
@@ -115,11 +117,10 @@ async function seedQuote(options?: { activePeriodEnd?: Date }) {
     writerId,
     plan: "monthly",
     usdCents: 800,
-    minCrtvaiWei: minCrtvaiWei.toString(),
-    curveOutputWei: signFields.curveOutputWei.toString(),
+    minAmountRaw: MIN_USDC.toString(),
     payee: PAYEE_SPLIT.toLowerCase(),
-    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
-    tokenDecimals: 18,
+    tokenAddress: BASE_USDC_ADDRESS.toLowerCase(),
+    tokenDecimals: USDC_DECIMALS,
     expiresAt: new Date(signFields.expiresAtMs),
     signature,
   });
@@ -132,7 +133,6 @@ describe("verifySubscriptionPayment concurrency", () => {
     testDb = await createTestDb();
     vi.stubEnv("QUOTE_SIGNING_SECRET", QUOTE_SIGNING_SECRET);
     vi.stubEnv("DEAR_PLATFORM_TREASURY_ADDRESS", TREASURY);
-    vi.stubEnv("PAYMENT_TOKEN", "crtvai");
     const expected = buildSortedDearSplit({
       writerRecipient: WRITER_RECIPIENT,
       treasuryAddress: TREASURY,
@@ -144,17 +144,17 @@ describe("verifySubscriptionPayment concurrency", () => {
       }),
     });
     setChainTxReaderForTests({
-      fetchErc20Transfer: vi
+      fetchUsdcTransfer: vi
         .fn()
-        .mockImplementation(async (_hash, _conf, _token, payee, _allowedFrom) => ({
-        from: SIGNER,
-        to: payee,
-        value: BigInt("1000000000000000000"),
-        blockNumber: BigInt(100),
-        blockTimestampSec: Math.floor(Date.now() / 1000),
-        confirmations: subscriptionMinConfirmations(),
-        logEmitter: CRTVAI_TOKEN_ADDRESS,
-      })),
+        .mockImplementation(async (_hash, _conf, payee) => ({
+          from: SIGNER,
+          to: payee,
+          value: MIN_USDC,
+          blockNumber: BigInt(100),
+          blockTimestampSec: Math.floor(Date.now() / 1000),
+          confirmations: subscriptionMinConfirmations(),
+          logEmitter: BASE_USDC_ADDRESS,
+        })),
     });
   });
 
@@ -167,58 +167,58 @@ describe("verifySubscriptionPayment concurrency", () => {
   it(
     "credits exactly one ledger row when two verifies run in parallel for the same tx",
     async () => {
-    const activePeriodEnd = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
-    const { quoteId } = await seedQuote({ activePeriodEnd });
-    const input = {
-      quoteId,
-      txHash: TX_HASH,
-      privyUserId: "did:privy:test-user",
-    };
-    const expectedPeriodEnd = new Date(
-      activePeriodEnd.getTime() + subscriptionPeriodMs("monthly"),
-    );
+      const activePeriodEnd = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+      const { quoteId } = await seedQuote({ activePeriodEnd });
+      const input = {
+        quoteId,
+        txHash: TX_HASH,
+        privyUserId: "did:privy:test-user",
+      };
+      const expectedPeriodEnd = new Date(
+        activePeriodEnd.getTime() + subscriptionPeriodMs("monthly"),
+      );
 
-    const dbA = await openConcurrentDb();
-    const dbB = await openConcurrentDb();
+      const dbA = await openConcurrentDb();
+      const dbB = await openConcurrentDb();
 
-    async function verifyLikeClient(db: DearCreativeDb) {
-      for (let attempt = 0; attempt < 5; attempt++) {
-        try {
-          return await verifySubscriptionPayment(db, input);
-        } catch (error) {
-          if (
-            error instanceof SubscriptionVerifyError &&
-            error.code === "verification_contention"
-          ) {
-            expect(error.retryAfterSeconds).toBe(1);
-            await new Promise((resolve) => setTimeout(resolve, 15));
-            continue;
+      async function verifyLikeClient(db: DearCreativeDb) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            return await verifySubscriptionPayment(db, input);
+          } catch (error) {
+            if (
+              error instanceof SubscriptionVerifyError &&
+              error.code === "verification_contention"
+            ) {
+              expect(error.retryAfterSeconds).toBe(1);
+              await new Promise((resolve) => setTimeout(resolve, 15));
+              continue;
+            }
+            throw error;
           }
-          throw error;
         }
+        throw new Error("verify did not complete after verification_contention retries");
       }
-      throw new Error("verify did not complete after verification_contention retries");
-    }
 
-    const [first, second] = await Promise.all([
-      verifyLikeClient(dbA),
-      verifyLikeClient(dbB),
-    ]);
+      const [first, second] = await Promise.all([
+        verifyLikeClient(dbA),
+        verifyLikeClient(dbB),
+      ]);
 
-    expect(first.subscriptionId).toBe(second.subscriptionId);
-    expect(first.ledgerId).toBe(second.ledgerId);
-    expect([first.idempotent, second.idempotent].filter(Boolean).length).toBe(
-      1,
-    );
-    expect(first.periodEnd).toBe(expectedPeriodEnd.toISOString());
-    expect(second.periodEnd).toBe(expectedPeriodEnd.toISOString());
+      expect(first.subscriptionId).toBe(second.subscriptionId);
+      expect(first.ledgerId).toBe(second.ledgerId);
+      expect([first.idempotent, second.idempotent].filter(Boolean).length).toBe(
+        1,
+      );
+      expect(first.periodEnd).toBe(expectedPeriodEnd.toISOString());
+      expect(second.periodEnd).toBe(expectedPeriodEnd.toISOString());
 
-    const rows = await testDb.select().from(paymentLedger);
-    expect(rows).toHaveLength(1);
+      const rows = await testDb.select().from(paymentLedger);
+      expect(rows).toHaveLength(1);
 
-    const [sub] = await testDb.select().from(subscriptions);
-    expect(sub?.periodEnd.toISOString()).toBe(expectedPeriodEnd.toISOString());
-  },
+      const [sub] = await testDb.select().from(subscriptions);
+      expect(sub?.periodEnd.toISOString()).toBe(expectedPeriodEnd.toISOString());
+    },
     15_000,
   );
 });

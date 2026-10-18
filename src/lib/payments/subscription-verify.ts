@@ -10,7 +10,7 @@ import {
 import { dearPlatformTreasuryAddress } from "./subscription-config";
 import {
   ChainTxUnavailableError,
-  fetchErc20Transfer,
+  fetchUsdcTransfer,
 } from "./subscription-chain-read";
 import {
   quoteSettlementDeadlineMs,
@@ -128,8 +128,7 @@ export async function verifySubscriptionPayment(
     writerId: quoteRow.writerId,
     plan: quoteRow.plan,
     usdCents: quoteRow.usdCents,
-    minCrtvaiWei: quoteRow.minCrtvaiWei,
-    curveOutputWei: quoteRow.curveOutputWei,
+    minAmountRaw: quoteRow.minAmountRaw,
     payee: quoteRow.payee,
     tokenAddress: quoteRow.tokenAddress,
     tokenDecimals: quoteRow.tokenDecimals,
@@ -198,7 +197,7 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  const minPaymentUnits = BigInt(quote.minCrtvaiWei);
+  const minPaymentUnits = BigInt(quote.minAmountRaw);
   const quotedTokenAddress = getAddress(quote.tokenAddress);
   const { payer, signer } = resolveSubscriptionPayerAddress(
     quote.wallet as `0x${string}`,
@@ -206,10 +205,9 @@ export async function verifySubscriptionPayment(
 
   let transfer;
   try {
-    transfer = await fetchErc20Transfer(
+    transfer = await fetchUsdcTransfer(
       txHash,
       subscriptionMinConfirmations(),
-      quotedTokenAddress,
       payeeAddress,
       [payer, signer],
     );
@@ -229,13 +227,10 @@ export async function verifySubscriptionPayment(
         409,
       );
     }
-    if (
-      message === "token_transfer_missing" ||
-      message === "crtvai_transfer_missing"
-    ) {
+    if (message === "token_transfer_missing") {
       throw new SubscriptionVerifyError(
         "token_transfer_missing",
-        "Transaction must include a Transfer log for the quoted payment token",
+        "Transaction must include a USDC Transfer log to the writer split",
         400,
       );
     }
@@ -256,7 +251,7 @@ export async function verifySubscriptionPayment(
   if (getAddress(transfer.logEmitter) !== quotedTokenAddress) {
     throw new SubscriptionVerifyError(
       "wrong_token_emitter",
-      "Transfer log must be emitted by the quoted payment token contract",
+      "Transfer log must be emitted by USDC on Base",
       400,
     );
   }

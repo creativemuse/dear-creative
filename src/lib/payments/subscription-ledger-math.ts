@@ -1,5 +1,5 @@
 /**
- * Ledger split math for subscription CRTVAI payments (record-only; Rex Splits pay out later).
+ * Ledger split math for subscription USDC payments (record-only; Rex Splits pay out later).
  *
  * Platform share is exactly 10% floored; the writer receives the remainder (≥ 90%).
  */

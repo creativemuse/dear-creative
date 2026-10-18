@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SubscriptionPlan } from "@/db/schema";
+import { BASE_USDC_ADDRESS, USDC_DECIMALS } from "./subscription-config";
 import {
   QuoteSigningNotConfiguredError,
   signSubscriptionQuote,
@@ -16,13 +17,11 @@ const baseFields = (): SubscriptionQuoteSignFields => ({
   writerId: "writer-1",
   plan: "monthly" as SubscriptionPlan,
   usdCents: 800,
-  minCrtvaiWei: BigInt(1000),
-  curveOutputWei: BigInt(1100),
+  minAmountRaw: BigInt(8_000000),
   payee: "0x2222222222222222222222222222222222222222",
-  tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-  tokenDecimals: 6,
+  tokenAddress: BASE_USDC_ADDRESS.toLowerCase(),
+  tokenDecimals: USDC_DECIMALS,
   expiresAtMs: 1_700_000_000_000,
-  slippageBps: 250,
   chainId: 8453,
 });
 

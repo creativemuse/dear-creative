@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db/client";
 import { paymentsDisabledResponse } from "@/lib/payments/disabled-response";
 import { isPaymentsEnabled } from "@/lib/payments/feature-flag";
-import { createLiveMeTokenCurveReader } from "@/lib/payments/metoken-curve-read";
 import { resolvePaymentsLinkedWallet } from "@/lib/payments/privy-linked-wallet";
 import {
   createSubscriptionQuote,
@@ -65,16 +64,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const quote = await createSubscriptionQuote(
-      getDb(),
-      createLiveMeTokenCurveReader(),
-      {
-        plan,
-        writerId: body.writerId.trim(),
-        privyUserId: linked.privyUserId,
-        signerWallet: linked.signerAddress,
-      },
-    );
+    const quote = await createSubscriptionQuote(getDb(), {
+      plan,
+      writerId: body.writerId.trim(),
+      privyUserId: linked.privyUserId,
+      signerWallet: linked.signerAddress,
+    });
     return NextResponse.json(quote);
   } catch (error) {
     if (error instanceof SubscriptionQuoteError) {

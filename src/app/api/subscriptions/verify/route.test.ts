@@ -20,24 +20,25 @@ import {
   writers,
 } from "@/db/schema";
 import { setPaymentsEnabledForTests as setFlag } from "@/lib/payments/feature-flag";
-import { CRTVAI_TOKEN_ADDRESS } from "@/lib/payments/metoken-curve-config";
+import {
+  BASE_USDC_ADDRESS,
+  BASE_CHAIN_ID,
+  USDC_DECIMALS,
+  quoteSettlementDeadlineMs,
+  subscriptionMinConfirmations,
+} from "@/lib/payments/subscription-config";
 import {
   ChainTxUnavailableError,
   resetChainTxReaderForTests,
   setChainTxReaderForTests,
-  type CrtvaiTransferObservation,
+  type Erc20TransferObservation,
 } from "@/lib/payments/subscription-chain-read";
 import {
   resetPaymentsLinkedWalletResolverForTests,
   setPaymentsLinkedWalletResolverForTests,
 } from "@/lib/payments/privy-linked-wallet";
-import {
-  quoteSettlementDeadlineMs,
-  subscriptionMinConfirmations,
-} from "@/lib/payments/subscription-config";
 import { signSubscriptionQuote } from "@/lib/payments/subscription-quote-sign";
-import { SUBSCRIPTION_QUOTE_SLIPPAGE_BPS } from "@/lib/payments/metoken-curve-config";
-import { BASE_CHAIN_ID } from "@/lib/payments/metoken-curve-config";
+import { usdcSubscriptionAmountUnits } from "@/lib/payments/subscription-usdc-pricing";
 import {
   buildSortedDearSplit,
   computeSplitV2Hash,
@@ -61,7 +62,7 @@ const SIGNER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
 const PAYEE_SPLIT = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TX_HASH =
   "0x1111111111111111111111111111111111111111111111111111111111111111" as const;
-const MIN_CRTVAI = BigInt("1000000000000000000");
+const MIN_USDC = usdcSubscriptionAmountUnits("monthly");
 
 async function createTestDb() {
   const dir = mkdtempSync(join(tmpdir(), "dear-sub-verify-"));
@@ -75,12 +76,12 @@ async function createTestDb() {
 async function seedQuote(options?: {
   expiresAt?: Date;
   privyUserId?: string;
-  minCrtvaiWei?: bigint;
+  minAmountRaw?: bigint;
 }) {
   const writerId = randomUUID();
   const quoteId = randomUUID();
   const privyUserId = options?.privyUserId ?? "did:privy:test-user";
-  const minCrtvaiWei = options?.minCrtvaiWei ?? MIN_CRTVAI;
+  const minAmountRaw = options?.minAmountRaw ?? MIN_USDC;
   const expiresAt =
     options?.expiresAt ?? new Date(Date.now() + 5 * 60 * 1000);
 
@@ -97,13 +98,11 @@ async function seedQuote(options?: {
     writerId,
     plan: "monthly" as const,
     usdCents: 800,
-    minCrtvaiWei,
-    curveOutputWei: minCrtvaiWei + BigInt(1000),
+    minAmountRaw,
     payee: PAYEE_SPLIT.toLowerCase(),
-    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
-    tokenDecimals: 18,
+    tokenAddress: BASE_USDC_ADDRESS.toLowerCase(),
+    tokenDecimals: USDC_DECIMALS,
     expiresAtMs: expiresAt.getTime(),
-    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
   };
 
@@ -116,20 +115,19 @@ async function seedQuote(options?: {
     writerId,
     plan: "monthly",
     usdCents: 800,
-    minCrtvaiWei: minCrtvaiWei.toString(),
-    curveOutputWei: signFields.curveOutputWei.toString(),
+    minAmountRaw: minAmountRaw.toString(),
     payee: PAYEE_SPLIT.toLowerCase(),
-    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
-    tokenDecimals: 18,
+    tokenAddress: BASE_USDC_ADDRESS.toLowerCase(),
+    tokenDecimals: USDC_DECIMALS,
     expiresAt,
     signature,
   });
 
-  return { quoteId, writerId, expiresAt, minCrtvaiWei };
+  return { quoteId, writerId, expiresAt, minAmountRaw };
 }
 
 function mockTransfer(
-  overrides: Partial<CrtvaiTransferObservation> & {
+  overrides: Partial<Erc20TransferObservation> & {
     expiresAt?: Date;
   } = {},
 ): void {
@@ -140,18 +138,16 @@ function mockTransfer(
   );
 
   setChainTxReaderForTests({
-    fetchErc20Transfer: vi
-      .fn()
-      .mockImplementation(async (_hash, _conf, token, payee) => ({
-        from: SIGNER,
-        to: payee,
-        value: MIN_CRTVAI,
-        blockNumber: BigInt(100),
-        blockTimestampSec,
-        confirmations: subscriptionMinConfirmations(),
-        logEmitter: overrides.logEmitter ?? token,
-        ...overrides,
-      })),
+    fetchUsdcTransfer: vi.fn().mockImplementation(async (_hash, _conf, payee) => ({
+      from: SIGNER,
+      to: payee,
+      value: MIN_USDC,
+      blockNumber: BigInt(100),
+      blockTimestampSec,
+      confirmations: subscriptionMinConfirmations(),
+      logEmitter: BASE_USDC_ADDRESS,
+      ...overrides,
+    })),
   });
 }
 
@@ -173,7 +169,6 @@ describe("POST /api/subscriptions/verify", () => {
     testDb = await createTestDb();
     vi.stubEnv("QUOTE_SIGNING_SECRET", QUOTE_SIGNING_SECRET);
     vi.stubEnv("DEAR_PLATFORM_TREASURY_ADDRESS", TREASURY);
-    vi.stubEnv("PAYMENT_TOKEN", "crtvai");
     setFlag(true);
     setPaymentsLinkedWalletResolverForTests(async () => ({
       privyUserId: "did:privy:test-user",
@@ -226,9 +221,7 @@ describe("POST /api/subscriptions/verify", () => {
   it("returns 503 when chain reader is unavailable", async () => {
     const { quoteId } = await seedQuote();
     setChainTxReaderForTests({
-      fetchErc20Transfer: vi
-        .fn()
-        .mockRejectedValue(new ChainTxUnavailableError()),
+      fetchUsdcTransfer: vi.fn().mockRejectedValue(new ChainTxUnavailableError()),
     });
     const response = await verifyRequest(quoteId);
     expect(response.status).toBe(503);
@@ -271,8 +264,8 @@ describe("POST /api/subscriptions/verify", () => {
   });
 
   it("rejects underpay", async () => {
-    const { quoteId, minCrtvaiWei } = await seedQuote();
-    mockTransfer({ value: minCrtvaiWei - BigInt(1) });
+    const { quoteId, minAmountRaw } = await seedQuote();
+    mockTransfer({ value: minAmountRaw - BigInt(1) });
     const response = await verifyRequest(quoteId);
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "underpaid" });
@@ -296,7 +289,7 @@ describe("POST /api/subscriptions/verify", () => {
   it("rejects insufficient confirmations", async () => {
     const { quoteId } = await seedQuote();
     setChainTxReaderForTests({
-      fetchErc20Transfer: vi
+      fetchUsdcTransfer: vi
         .fn()
         .mockRejectedValue(new Error("insufficient_confirmations")),
     });
@@ -334,7 +327,7 @@ describe("POST /api/subscriptions/verify", () => {
 
   it("records 90/10 ledger split with remainder to writer", async () => {
     const min = BigInt(101);
-    const { quoteId } = await seedQuote({ minCrtvaiWei: min });
+    const { quoteId } = await seedQuote({ minAmountRaw: min });
     mockTransfer({ value: min });
     const response = await verifyRequest(quoteId);
     expect(response.status).toBe(200);
@@ -345,5 +338,8 @@ describe("POST /api/subscriptions/verify", () => {
     expect(ledger?.writerWei).toBe("91");
     expect(ledger?.payoutStatus).toBe("recorded");
     expect(ledger?.quoteId).toBe(quoteId);
+    expect(ledger?.tokenAddress.toLowerCase()).toBe(
+      BASE_USDC_ADDRESS.toLowerCase(),
+    );
   });
 });
