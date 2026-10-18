@@ -9,6 +9,8 @@ import {
 } from "@/db/schema";
 import {
   BASE_CHAIN_ID,
+  CRTVAI_DECIMALS,
+  CRTVAI_METOKEN_ADDRESS,
   SUBSCRIPTION_CURVE_STABILITY_MAX_BPS,
   SUBSCRIPTION_CURVE_STABILITY_WINDOW_MS,
   SUBSCRIPTION_QUOTE_EXPIRY_SECONDS,
@@ -89,7 +91,7 @@ export async function assertCurveStability(
   );
   const [recent] = await db
     .select({
-      curveOutputWei: subscriptionQuotes.curveOutputWei,
+      minAmountRaw: subscriptionQuotes.minAmountRaw,
     })
     .from(subscriptionQuotes)
     .where(
@@ -106,8 +108,12 @@ export async function assertCurveStability(
     return;
   }
 
-  const previous = BigInt(recent.curveOutputWei);
-  const deltaBps = curveOutputDeltaBps(previous, input.freshCurveOutputWei);
+  const previous = BigInt(recent.minAmountRaw);
+  const freshMin = applySlippageMinCrtvaiWei(
+    input.freshCurveOutputWei,
+    SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
+  );
+  const deltaBps = curveOutputDeltaBps(previous, freshMin);
   if (deltaBps > SUBSCRIPTION_CURVE_STABILITY_MAX_BPS) {
     throw new SubscriptionQuoteError(
       "quote_curve_unstable",
@@ -244,9 +250,10 @@ export async function createSubscriptionQuote(
     writerId: input.writerId,
     plan: input.plan,
     usdCents,
-    minCrtvaiWei: minCrtvaiWei.toString(),
-    curveOutputWei: curveOutputWei.toString(),
+    minAmountRaw: minCrtvaiWei.toString(),
     payee,
+    tokenAddress: CRTVAI_METOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: CRTVAI_DECIMALS,
     expiresAt: new Date(expiresAtMs),
     signature,
   });

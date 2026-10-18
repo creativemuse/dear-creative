@@ -262,9 +262,10 @@ export const subscriptionQuotes = sqliteTable(
       .references(() => writers.id),
     plan: text("plan", { enum: subscriptionPlanEnum }).notNull(),
     usdCents: integer("usd_cents").notNull(),
-    minCrtvaiWei: text("min_crtvai_wei").notNull(),
-    curveOutputWei: text("curve_output_wei").notNull(),
+    minAmountRaw: text("min_amount_raw").notNull(),
     payee: text("payee").notNull(),
+    tokenAddress: text("token_address").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
     signature: text("signature").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
