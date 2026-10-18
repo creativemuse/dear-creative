@@ -28,6 +28,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  if (body === null || typeof body !== "object") {
+    return NextResponse.json(
+      { error: "Request body must be a JSON object", code: "invalid_body" },
+      { status: 400 },
+    );
+  }
+
   const plan = parseSubscriptionPlan(body.plan);
   if (!plan) {
     return NextResponse.json(

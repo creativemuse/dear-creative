@@ -9,6 +9,10 @@ import {
 } from "@/db/schema";
 import { CRTVAI_TOKEN_ADDRESS } from "./metoken-curve-config";
 import {
+  dearPlatformTreasuryAddress,
+  dearWriterSplitRecipientAddress,
+} from "./subscription-config";
+import {
   ChainTxUnavailableError,
   fetchCrtvaiTransfer,
 } from "./subscription-chain-read";
@@ -52,6 +56,8 @@ export type VerifySubscriptionResult = {
   periodEnd: string;
 };
 
+type DbLike = Pick<DearCreativeDb, "select" | "insert" | "update" | "transaction">;
+
 function normalizeTxHash(txHash: string): Hash {
   const trimmed = txHash.trim().toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(trimmed)) {
@@ -87,31 +93,7 @@ export async function verifySubscriptionPayment(
     .limit(1);
 
   if (existingLedger) {
-    if (existingLedger.quoteId !== input.quoteId) {
-      throw new SubscriptionVerifyError(
-        "tx_hash_reused",
-        "This transaction was already used for another quote",
-        409,
-      );
-    }
-    const sub = await findSubscriptionForQuote(
-      db,
-      input.privyUserId,
-      input.quoteId,
-    );
-    if (!sub) {
-      throw new SubscriptionVerifyError(
-        "ledger_orphan",
-        "Payment ledger exists but subscription not found",
-        500,
-      );
-    }
-    return {
-      subscriptionId: sub.id,
-      ledgerId: existingLedger.id,
-      idempotent: true,
-      periodEnd: sub.periodEnd.toISOString(),
-    };
+    return finishIdempotentFromLedger(db, input, existingLedger);
   }
 
   const [quoteRow] = await db
@@ -158,6 +140,8 @@ export async function verifySubscriptionPayment(
     );
   }
 
+  const payeeAddress = getAddress(quote.payee);
+
   const [writer] = await db
     .select()
     .from(writers)
@@ -172,8 +156,28 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  const splitAddress = getAddress(writer.payoutSplitAddress);
-  const splitVerification = await verifyWriterSplit(splitAddress);
+  if (getAddress(writer.payoutSplitAddress) !== payeeAddress) {
+    throw new SubscriptionVerifyError(
+      "quote_payee_stale",
+      "Quote payee does not match the writer's configured split",
+      422,
+    );
+  }
+
+  const treasury = dearPlatformTreasuryAddress();
+  const writerRecipient = dearWriterSplitRecipientAddress();
+  if (!treasury || !writerRecipient) {
+    throw new SubscriptionVerifyError(
+      "paid_signup_unavailable",
+      "Paid signup split configuration is incomplete",
+      422,
+    );
+  }
+
+  const splitVerification = await verifyWriterSplit(payeeAddress, {
+    writerRecipient,
+    treasuryAddress: treasury,
+  });
   if (!splitVerification.ok) {
     throw new SubscriptionVerifyError(
       "invalid_writer_split",
@@ -192,6 +196,7 @@ export async function verifySubscriptionPayment(
     transfer = await fetchCrtvaiTransfer(
       txHash,
       subscriptionMinConfirmations(),
+      payeeAddress,
     );
   } catch (error) {
     if (error instanceof ChainTxUnavailableError) {
@@ -249,7 +254,7 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  if (getAddress(transfer.to) !== splitAddress) {
+  if (getAddress(transfer.to) !== payeeAddress) {
     throw new SubscriptionVerifyError(
       "wrong_recipient",
       "CRTVAI must be sent to the writer split contract",
@@ -279,116 +284,176 @@ export async function verifySubscriptionPayment(
   const subscriptionId = randomUUID();
   const periodMs = subscriptionPeriodMs(quote.plan);
 
-  const [activeSub] = await db
-    .select()
-    .from(subscriptions)
-    .where(
-      and(
-        eq(subscriptions.privyUserId, input.privyUserId),
-        eq(subscriptions.writerId, quote.writerId),
-        eq(subscriptions.status, "active"),
-      ),
-    )
-    .limit(1);
-
-  let periodStart = new Date(nowMs);
-  let periodEnd = new Date(nowMs + periodMs);
-
-  if (activeSub && activeSub.periodEnd.getTime() > nowMs) {
-    periodStart = activeSub.periodStart;
-    periodEnd = new Date(activeSub.periodEnd.getTime() + periodMs);
-    await db
-      .update(subscriptions)
-      .set({
-        periodEnd,
-        plan: quote.plan,
-        wallet: signer,
-        updatedAt: new Date(nowMs),
+  return db.transaction(async (tx) => {
+    await tx
+      .insert(paymentLedger)
+      .values({
+        id: ledgerId,
+        txHash,
+        quoteId: quote.id,
+        grossWei: transfer.value.toString(),
+        writerWei: writerWei.toString(),
+        platformWei: platformWei.toString(),
+        splitAddress: payeeAddress.toLowerCase(),
+        payoutStatus: "recorded",
       })
-      .where(eq(subscriptions.id, activeSub.id));
+      .onConflictDoNothing();
 
-    await db.insert(paymentLedger).values({
-      id: ledgerId,
-      txHash,
-      quoteId: quote.id,
-      grossWei: transfer.value.toString(),
-      writerWei: writerWei.toString(),
-      platformWei: platformWei.toString(),
-      splitAddress: splitAddress.toLowerCase(),
-      payoutStatus: "recorded",
+    const [ledger] = await tx
+      .select()
+      .from(paymentLedger)
+      .where(eq(paymentLedger.txHash, txHash))
+      .limit(1);
+
+    if (!ledger) {
+      throw new SubscriptionVerifyError(
+        "ledger_write_failed",
+        "Could not record payment ledger row",
+        500,
+      );
+    }
+
+    if (ledger.quoteId !== quote.id) {
+      throw new SubscriptionVerifyError(
+        "tx_hash_reused",
+        "This transaction was already used for another quote",
+        409,
+      );
+    }
+
+    const idempotent = ledger.id !== ledgerId;
+
+    if (idempotent) {
+      const sub = await findSubscriptionForQuote(
+        tx,
+        input.privyUserId,
+        input.quoteId,
+      );
+      if (!sub) {
+        throw new SubscriptionVerifyError(
+          "ledger_orphan",
+          "Payment ledger exists but subscription not found",
+          500,
+        );
+      }
+      return {
+        subscriptionId: sub.id,
+        ledgerId: ledger.id,
+        idempotent: true,
+        periodEnd: sub.periodEnd.toISOString(),
+      };
+    }
+
+    const [activeSub] = await tx
+      .select()
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.privyUserId, input.privyUserId),
+          eq(subscriptions.writerId, quote.writerId),
+          eq(subscriptions.status, "active"),
+        ),
+      )
+      .limit(1);
+
+    let periodStart = new Date(nowMs);
+    let periodEnd = new Date(nowMs + periodMs);
+
+    if (activeSub && activeSub.periodEnd.getTime() > nowMs) {
+      periodStart = activeSub.periodStart;
+      periodEnd = new Date(activeSub.periodEnd.getTime() + periodMs);
+      await tx
+        .update(subscriptions)
+        .set({
+          periodEnd,
+          plan: quote.plan,
+          wallet: signer,
+          updatedAt: new Date(nowMs),
+        })
+        .where(eq(subscriptions.id, activeSub.id));
+
+      return {
+        subscriptionId: activeSub.id,
+        ledgerId: ledger.id,
+        idempotent: false,
+        periodEnd: periodEnd.toISOString(),
+      };
+    }
+
+    if (activeSub) {
+      await tx
+        .update(subscriptions)
+        .set({
+          periodStart,
+          periodEnd,
+          plan: quote.plan,
+          wallet: signer,
+          updatedAt: new Date(nowMs),
+        })
+        .where(eq(subscriptions.id, activeSub.id));
+
+      return {
+        subscriptionId: activeSub.id,
+        ledgerId: ledger.id,
+        idempotent: false,
+        periodEnd: periodEnd.toISOString(),
+      };
+    }
+
+    await tx.insert(subscriptions).values({
+      id: subscriptionId,
+      privyUserId: input.privyUserId,
+      wallet: signer,
+      writerId: quote.writerId,
+      plan: quote.plan,
+      periodStart,
+      periodEnd,
+      status: "active",
     });
 
     return {
-      subscriptionId: activeSub.id,
-      ledgerId,
+      subscriptionId,
+      ledgerId: ledger.id,
       idempotent: false,
       periodEnd: periodEnd.toISOString(),
     };
-  }
-
-  if (activeSub) {
-    await db
-      .update(subscriptions)
-      .set({
-        periodStart,
-        periodEnd,
-        plan: quote.plan,
-        wallet: signer,
-        updatedAt: new Date(nowMs),
-      })
-      .where(eq(subscriptions.id, activeSub.id));
-
-    await db.insert(paymentLedger).values({
-      id: ledgerId,
-      txHash,
-      quoteId: quote.id,
-      grossWei: transfer.value.toString(),
-      writerWei: writerWei.toString(),
-      platformWei: platformWei.toString(),
-      splitAddress: splitAddress.toLowerCase(),
-      payoutStatus: "recorded",
-    });
-
-    return {
-      subscriptionId: activeSub.id,
-      ledgerId,
-      idempotent: false,
-      periodEnd: periodEnd.toISOString(),
-    };
-  }
-
-  await db.insert(subscriptions).values({
-    id: subscriptionId,
-    privyUserId: input.privyUserId,
-    wallet: signer,
-    writerId: quote.writerId,
-    plan: quote.plan,
-    periodStart,
-    periodEnd,
-    status: "active",
   });
+}
 
-  await db.insert(paymentLedger).values({
-    id: ledgerId,
-    txHash,
-    quoteId: quote.id,
-    grossWei: transfer.value.toString(),
-    writerWei: writerWei.toString(),
-    platformWei: platformWei.toString(),
-    splitAddress: splitAddress.toLowerCase(),
-    payoutStatus: "recorded",
-  });
-
+async function finishIdempotentFromLedger(
+  db: DbLike,
+  input: VerifySubscriptionInput,
+  existingLedger: typeof paymentLedger.$inferSelect,
+): Promise<VerifySubscriptionResult> {
+  if (existingLedger.quoteId !== input.quoteId) {
+    throw new SubscriptionVerifyError(
+      "tx_hash_reused",
+      "This transaction was already used for another quote",
+      409,
+    );
+  }
+  const sub = await findSubscriptionForQuote(
+    db,
+    input.privyUserId,
+    input.quoteId,
+  );
+  if (!sub) {
+    throw new SubscriptionVerifyError(
+      "ledger_orphan",
+      "Payment ledger exists but subscription not found",
+      500,
+    );
+  }
   return {
-    subscriptionId,
-    ledgerId,
-    idempotent: false,
-    periodEnd: periodEnd.toISOString(),
+    subscriptionId: sub.id,
+    ledgerId: existingLedger.id,
+    idempotent: true,
+    periodEnd: sub.periodEnd.toISOString(),
   };
 }
 
 async function findSubscriptionForQuote(
-  db: DearCreativeDb,
+  db: DbLike,
   privyUserId: string,
   quoteId: string,
 ) {
@@ -417,7 +482,7 @@ export function parseVerifyBody(body: unknown): {
   quoteId: string;
   txHash: string;
 } | null {
-  if (!body || typeof body !== "object") {
+  if (body === null || typeof body !== "object") {
     return null;
   }
   const record = body as Record<string, unknown>;
@@ -429,4 +494,3 @@ export function parseVerifyBody(body: unknown): {
   }
   return { quoteId: record.quoteId.trim(), txHash: record.txHash.trim() };
 }
-

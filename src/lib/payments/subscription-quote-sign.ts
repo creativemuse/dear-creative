@@ -41,7 +41,10 @@ export type StoredSubscriptionQuoteRow = {
 
 function signingSecret(): string | null {
   const raw = process.env.QUOTE_SIGNING_SECRET?.trim();
-  if (!raw || raw.length < MIN_QUOTE_SIGNING_SECRET_BYTES) {
+  if (
+    !raw ||
+    Buffer.byteLength(raw, "utf8") < MIN_QUOTE_SIGNING_SECRET_BYTES
+  ) {
     return null;
   }
   return raw;

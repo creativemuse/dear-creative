@@ -39,9 +39,14 @@ import { signSubscriptionQuote } from "@/lib/payments/subscription-quote-sign";
 import { SUBSCRIPTION_QUOTE_SLIPPAGE_BPS } from "@/lib/payments/metoken-curve-config";
 import { BASE_CHAIN_ID } from "@/lib/payments/metoken-curve-config";
 import {
-  resetWriterSplitReaderForTests,
-  setWriterSplitReaderForTests,
+  buildSortedDearSplit,
+  computeSplitV2Hash,
+  resetPullSplitReaderForTests,
+  setPullSplitReaderForTests,
 } from "@/lib/payments/writer-split-verify";
+
+const WRITER_RECIPIENT = "0x1111111111111111111111111111111111111111";
+const TREASURY = "0x2222222222222222222222222222222222222222";
 import { POST } from "./route";
 
 const QUOTE_SIGNING_SECRET = "test-quote-signing-secret-key-32bytes!!";
@@ -130,16 +135,18 @@ function mockTransfer(
   );
 
   setChainTxReaderForTests({
-    fetchCrtvaiTransfer: vi.fn().mockResolvedValue({
-      from: SIGNER,
-      to: PAYEE_SPLIT,
-      value: MIN_CRTVAI,
-      blockNumber: BigInt(100),
-      blockTimestampSec,
-      confirmations: subscriptionMinConfirmations(),
-      logEmitter: CRTVAI_TOKEN_ADDRESS,
-      ...overrides,
-    }),
+    fetchCrtvaiTransfer: vi
+      .fn()
+      .mockImplementation(async (_hash, _conf, payee) => ({
+        from: SIGNER,
+        to: payee,
+        value: MIN_CRTVAI,
+        blockNumber: BigInt(100),
+        blockTimestampSec,
+        confirmations: subscriptionMinConfirmations(),
+        logEmitter: CRTVAI_TOKEN_ADDRESS,
+        ...overrides,
+      })),
   });
 }
 
@@ -160,20 +167,22 @@ describe("POST /api/subscriptions/verify", () => {
   beforeEach(async () => {
     testDb = await createTestDb();
     vi.stubEnv("QUOTE_SIGNING_SECRET", QUOTE_SIGNING_SECRET);
+    vi.stubEnv("DEAR_PLATFORM_TREASURY_ADDRESS", TREASURY);
+    vi.stubEnv("DEAR_WRITER_SPLIT_RECIPIENT_ADDRESS", WRITER_RECIPIENT);
     setFlag(true);
     setPaymentsLinkedWalletResolverForTests(async () => ({
       privyUserId: "did:privy:test-user",
       signerAddress: SIGNER,
     }));
     mockTransfer();
-    setWriterSplitReaderForTests({
-      readWriterSplit: vi.fn().mockResolvedValue({
-        controller: "0x0000000000000000000000000000000000000000",
-        recipients: [
-          "0x1111111111111111111111111111111111111111",
-          "0x2222222222222222222222222222222222222222",
-        ],
-        allocations: [BigInt(900_000), BigInt(100_000)],
+    const expectedSplit = buildSortedDearSplit({
+      writerRecipient: WRITER_RECIPIENT,
+      treasuryAddress: TREASURY,
+    });
+    setPullSplitReaderForTests({
+      readPullSplitWallet: vi.fn().mockResolvedValue({
+        splitHash: computeSplitV2Hash(expectedSplit),
+        owner: "0x0000000000000000000000000000000000000000",
       }),
     });
   });
@@ -182,9 +191,21 @@ describe("POST /api/subscriptions/verify", () => {
     setFlag(undefined);
     resetPaymentsLinkedWalletResolverForTests();
     resetChainTxReaderForTests();
-    resetWriterSplitReaderForTests();
+    resetPullSplitReaderForTests();
     vi.unstubAllEnvs();
     vi.useRealTimers();
+  });
+
+  it("returns 400 when JSON body is null", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/subscriptions/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "null",
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "invalid_body" });
   });
 
   it("returns 503 when quote signing is not configured", async () => {
@@ -270,7 +291,9 @@ describe("POST /api/subscriptions/verify", () => {
   it("rejects insufficient confirmations", async () => {
     const { quoteId } = await seedQuote();
     setChainTxReaderForTests({
-      fetchCrtvaiTransfer: vi.fn().mockRejectedValue(new Error("insufficient_confirmations")),
+      fetchCrtvaiTransfer: vi
+        .fn()
+        .mockRejectedValue(new Error("insufficient_confirmations")),
     });
     const response = await verifyRequest(quoteId);
     expect(response.status).toBe(409);
