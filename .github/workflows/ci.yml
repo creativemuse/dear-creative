@@ -15,7 +15,20 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/adam/package-lock.json
       - run: npm ci
       - run: npm run lint
       - run: npm run test
       - run: npm run build
+      - name: Adam ADK service
+        working-directory: services/adam
+        run: |
+          npm ci
+          npm test
+          npm run build
+          npm run build:agent
+          npm run build:prod
+      - name: Adam prod image boot proof
+        run: ./scripts/gcp/adam-docker-boot-proof.sh
