@@ -1,23 +1,12 @@
-import { notFound } from "next/navigation";
-import { connection } from "next/server";
-import { Suspense } from "react";
-import { getCachedPublishedPostBySlug } from "@/lib/posts/published-posts-cache";
 import { publishedPostBodyForDisplay } from "@/lib/posts/published-post-render";
-
-export const instant = false;
+import type { PublishedPostDetail } from "@/lib/posts/published-posts";
+import { requirePublishedPostBySlug } from "@/lib/posts/require-published-post";
 
 type PageProps = {
   params: Promise<{ slug: string }>;
 };
 
-async function PostArticle({ params }: PageProps) {
-  await connection();
-  const { slug } = await params;
-  const post = await getCachedPublishedPostBySlug(slug);
-  if (!post) {
-    notFound();
-  }
-
+function PostArticle({ post }: { post: PublishedPostDetail }) {
   const bodyHtml = publishedPostBodyForDisplay(post.bodyHtml);
 
   return (
@@ -48,30 +37,16 @@ async function PostArticle({ params }: PageProps) {
 }
 
 export async function generateMetadata({ params }: PageProps) {
-  await connection();
   const { slug } = await params;
-  const post = await getCachedPublishedPostBySlug(slug);
-  if (!post) {
-    return {};
-  }
+  const post = await requirePublishedPostBySlug(slug);
   return {
     title: post.title,
     description: post.excerpt,
   };
 }
 
-export default function PostPage(props: PageProps) {
-  return (
-    <Suspense
-      fallback={
-        <main className="mx-auto max-w-3xl px-6 py-16">
-          <p className="text-zinc-500" aria-busy="true">
-            Loading…
-          </p>
-        </main>
-      }
-    >
-      <PostArticle params={props.params} />
-    </Suspense>
-  );
+export default async function PostPage(props: PageProps) {
+  const { slug } = await props.params;
+  const post = await requirePublishedPostBySlug(slug);
+  return <PostArticle post={post} />;
 }
