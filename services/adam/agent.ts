@@ -20,7 +20,14 @@ const publishDraftTool = new FunctionTool({
     emailHtml: z.string().optional().describe("Optional email HTML body"),
     sponsorId: z.string().optional().describe("Optional sponsor id"),
   }),
-  execute: async (input) => publishDraftToQueue({ ...input, dryRun: false }),
+  execute: async (input: {
+    slug: string;
+    title: string;
+    teaserText?: string;
+    emailSubject?: string;
+    emailHtml?: string;
+    sponsorId?: string;
+  }) => publishDraftToQueue({ ...input, dryRun: false }),
 });
 
 const fetchSponsorsTool = new FunctionTool({
