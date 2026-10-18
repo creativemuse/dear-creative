@@ -7,25 +7,10 @@ cd "${ROOT}"
 
 LOCAL_DATABASE_URL="${LOCAL_DATABASE_URL:-file:./data/ci-dear-creative.db}"
 export LOCAL_DATABASE_URL
-PORT="${PORT:-3099}"
+PORT="${PORT:-$((31000 + RANDOM % 9000))}"
 BOGUS_SLUG="${BOGUS_SLUG:-bogus-slug-notfound-check}"
 BASE_URL="http://127.0.0.1:${PORT}"
 LOG_FILE="${LOG_FILE:-/tmp/post-slug-notfound-noindex.log}"
-
-stop_port() {
-  pkill -f "next start -p ${PORT}" >/dev/null 2>&1 || true
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${PORT}/tcp" >/dev/null 2>&1 || true
-  fi
-  if command -v lsof >/dev/null 2>&1; then
-    while read -r pid; do
-      [[ -n "${pid}" ]] && kill "${pid}" 2>/dev/null || true
-    done < <(lsof -t -i:"${PORT}" -sTCP:LISTEN 2>/dev/null || true)
-  fi
-  sleep 1
-}
-
-stop_port
 
 npm run db:migrate:local >/dev/null
 
@@ -39,7 +24,6 @@ cleanup() {
     kill "${SERVER_PID}" 2>/dev/null || true
     wait "${SERVER_PID}" 2>/dev/null || true
   fi
-  stop_port
 }
 trap cleanup EXIT
 
