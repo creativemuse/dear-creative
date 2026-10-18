@@ -20,6 +20,7 @@ export type GatedDeliveryBlockedReason =
   | "content_changed"
   | "approval_expired"
   | "already_delivered"
+  | "imported_archive"
   | "in_progress"
   | "client_unconfigured"
   | "needs_review";
