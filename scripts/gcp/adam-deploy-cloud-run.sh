@@ -72,6 +72,7 @@ SA_ID="${ADAM_RUNTIME_SA:?}"
 SA_EMAIL="${SA_ID}@${PROJECT}.iam.gserviceaccount.com"
 TOKEN_SECRET="${ADAM_SECRET_DEAR_APP_API_TOKEN:?}"
 BASE_URL_SECRET="${ADAM_SECRET_DEAR_APP_BASE_URL:?}"
+MEMORY="${ADAM_MEMORY:-1Gi}"
 
 gcloud config set project "${PROJECT}" >/dev/null
 
@@ -83,7 +84,7 @@ COMMON_ARGS=(
   --min-instances 0
   --max-instances 2
   --cpu 1
-  --memory 512Mi
+  --memory "${MEMORY}"
   --concurrency 10
   --timeout 300
   --set-env-vars "RESEND_LIVE=false,PAYMENTS_ENABLED=false,GOOGLE_GENAI_USE_VERTEXAI=1,GOOGLE_CLOUD_PROJECT=${PROJECT},GOOGLE_CLOUD_LOCATION=${REGION},ADAM_GEMINI_MODEL=gemini-2.5-flash"
