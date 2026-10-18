@@ -69,5 +69,6 @@ adam_gcp_validate_image_ref() {
 }
 
 adam_gcp_default_adam_image_repo() {
-  echo "us-east4-docker.pkg.dev/${GCP_PROJECT_ID}/dear-creative/adam"
+  local region="${GCP_REGION:-us-east4}"
+  echo "${region}-docker.pkg.dev/${GCP_PROJECT_ID}/dear-creative/adam"
 }
