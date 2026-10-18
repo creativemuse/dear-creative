@@ -36,6 +36,10 @@ import {
   verifySubscriptionQuoteSignature,
   type SubscriptionQuoteSignFields,
 } from "@/lib/payments/subscription-quote-sign";
+import {
+  resetWriterSplitReaderForTests,
+  setWriterSplitReaderForTests,
+} from "@/lib/payments/writer-split-verify";
 import { POST } from "./route";
 
 let testDb: ReturnType<typeof drizzle>;
@@ -63,6 +67,19 @@ function mockCurveMinted(wei: bigint) {
   });
 }
 
+function mockImmutableWriterSplit() {
+  setWriterSplitReaderForTests({
+    readWriterSplit: vi.fn().mockResolvedValue({
+      controller: "0x0000000000000000000000000000000000000000",
+      recipients: [
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+      ],
+      allocations: [BigInt(900_000), BigInt(100_000)],
+    }),
+  });
+}
+
 describe("POST /api/subscriptions/quote", () => {
   beforeEach(async () => {
     testDb = await createTestDb();
@@ -73,12 +90,14 @@ describe("POST /api/subscriptions/quote", () => {
       signerAddress: SIGNER,
     }));
     mockCurveMinted(BigInt("1000000000000000000"));
+    mockImmutableWriterSplit();
   });
 
   afterEach(() => {
     setFlag(undefined);
     resetPaymentsLinkedWalletResolverForTests();
     resetMeTokenCurveReaderForTests();
+    resetWriterSplitReaderForTests();
     vi.unstubAllEnvs();
     vi.useRealTimers();
   });
