@@ -7,7 +7,7 @@ import {
   type Address,
 } from "viem";
 import { base } from "viem/chains";
-import { METOKEN_CURVE_RPC_TIMEOUT_MS } from "./metoken-curve-config";
+import { SUBSCRIPTION_RPC_TIMEOUT_MS } from "./subscription-config";
 
 /**
  * Splits v2 PullSplit stores only `splitHash` on-chain (not full recipient lists).
@@ -119,7 +119,7 @@ async function readPullSplitWalletLive(
   const client = createPublicClient({
     chain: base,
     transport: http(alchemyRpcUrl(), {
-      timeout: METOKEN_CURVE_RPC_TIMEOUT_MS,
+      timeout: SUBSCRIPTION_RPC_TIMEOUT_MS,
     }),
   });
   const [splitHash, owner] = await Promise.all([

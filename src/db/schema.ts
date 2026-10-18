@@ -251,6 +251,73 @@ export const writers = sqliteTable(
   (table) => [index("writers_payout_split_idx").on(table.payoutSplitAddress)],
 );
 
+export const subscriptionStatusEnum = ["active"] as const;
+export type SubscriptionStatus = (typeof subscriptionStatusEnum)[number];
+
+export const payoutStatusEnum = ["recorded"] as const;
+export type PayoutStatus = (typeof payoutStatusEnum)[number];
+
+export const subscriptions = sqliteTable(
+  "subscriptions",
+  {
+    id: text("id").primaryKey(),
+    privyUserId: text("privy_user_id").notNull(),
+    wallet: text("wallet").notNull(),
+    writerId: text("writer_id")
+      .notNull()
+      .references(() => writers.id),
+    plan: text("plan", { enum: subscriptionPlanEnum }).notNull(),
+    periodStart: integer("period_start", { mode: "timestamp_ms" }).notNull(),
+    periodEnd: integer("period_end", { mode: "timestamp_ms" }).notNull(),
+    status: text("status", { enum: subscriptionStatusEnum })
+      .notNull()
+      .default("active"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index("subscriptions_privy_writer_idx").on(
+      table.privyUserId,
+      table.writerId,
+    ),
+    index("subscriptions_status_period_end_idx").on(
+      table.status,
+      table.periodEnd,
+    ),
+  ],
+);
+
+export const paymentLedger = sqliteTable(
+  "payment_ledger",
+  {
+    id: text("id").primaryKey(),
+    txHash: text("tx_hash").notNull(),
+    quoteId: text("quote_id")
+      .notNull()
+      .references(() => subscriptionQuotes.id),
+    grossAmountRaw: text("gross_amount_raw").notNull(),
+    writerAmountRaw: text("writer_amount_raw").notNull(),
+    platformAmountRaw: text("platform_amount_raw").notNull(),
+    splitAddress: text("split_address").notNull(),
+    tokenAddress: text("token_address").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
+    payoutStatus: text("payout_status", { enum: payoutStatusEnum })
+      .notNull()
+      .default("recorded"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    uniqueIndex("payment_ledger_tx_hash_unique").on(table.txHash),
+    index("payment_ledger_quote_id_idx").on(table.quoteId),
+  ],
+);
+
 export const subscriptionQuotes = sqliteTable(
   "subscription_quotes",
   {

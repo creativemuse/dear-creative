@@ -57,6 +57,13 @@
       "when": 1792342190926,
       "tag": "0007_confused_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1792342654530,
+      "tag": "0008_absent_randall",
+      "breakpoints": true
     }
   ]
 }

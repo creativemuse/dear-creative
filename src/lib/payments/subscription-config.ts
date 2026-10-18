@@ -1,5 +1,19 @@
 import { getAddress, type Address } from "viem";
-import { SUBSCRIPTION_QUOTE_EXPIRY_SECONDS } from "./metoken-curve-config";
+
+/** Base mainnet chain id for subscription quotes. */
+export const BASE_CHAIN_ID = 8453;
+
+/** USDC on Base (subscription v1 settlement token). */
+export const BASE_USDC_ADDRESS =
+  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+
+export const USDC_DECIMALS = 6;
+
+/** Subscription quote lifetime (seconds). */
+export const SUBSCRIPTION_QUOTE_EXPIRY_SECONDS = 300;
+
+/** JSON-RPC timeout for on-chain subscription reads (ms). */
+export const SUBSCRIPTION_RPC_TIMEOUT_MS = 8_000;
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
@@ -42,5 +56,3 @@ export function subscriptionPeriodMs(plan: "monthly" | "yearly"): number {
 export function quoteSettlementDeadlineMs(expiresAtMs: number): number {
   return expiresAtMs + SUBSCRIPTION_SETTLEMENT_GRACE_SECONDS * 1000;
 }
-
-export { SUBSCRIPTION_QUOTE_EXPIRY_SECONDS };

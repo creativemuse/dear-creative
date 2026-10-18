@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SubscriptionPlan } from "@/db/schema";
-import { BASE_CHAIN_ID, SUBSCRIPTION_QUOTE_SLIPPAGE_BPS } from "./metoken-curve-config";
+import { BASE_CHAIN_ID } from "./subscription-config";
 
 export const MIN_QUOTE_SIGNING_SECRET_BYTES = 32;
 
@@ -11,11 +11,11 @@ export type SubscriptionQuoteSignFields = {
   writerId: string;
   plan: SubscriptionPlan;
   usdCents: number;
-  minCrtvaiWei: bigint;
-  curveOutputWei: bigint;
+  minAmountRaw: bigint;
   payee: string;
+  tokenAddress: string;
+  tokenDecimals: number;
   expiresAtMs: number;
-  slippageBps: number;
   chainId: number;
 };
 
@@ -32,9 +32,10 @@ export type StoredSubscriptionQuoteRow = {
   writerId: string;
   plan: SubscriptionPlan;
   usdCents: number;
-  minCrtvaiWei: string;
-  curveOutputWei: string;
+  minAmountRaw: string;
   payee: string;
+  tokenAddress: string;
+  tokenDecimals: number;
   expiresAt: Date;
   signature: string;
 };
@@ -62,11 +63,11 @@ function buildPayload(fields: SubscriptionQuoteSignFields): string {
     fields.writerId,
     fields.plan,
     String(fields.usdCents),
-    fields.minCrtvaiWei.toString(),
-    fields.curveOutputWei.toString(),
+    fields.minAmountRaw.toString(),
     fields.payee.toLowerCase(),
+    fields.tokenAddress.toLowerCase(),
+    String(fields.tokenDecimals),
     String(fields.expiresAtMs),
-    String(fields.slippageBps),
     String(fields.chainId),
   ].join("|");
 }
@@ -81,11 +82,11 @@ export function signFieldsFromStoredQuote(
     writerId: row.writerId,
     plan: row.plan,
     usdCents: row.usdCents,
-    minCrtvaiWei: BigInt(row.minCrtvaiWei),
-    curveOutputWei: BigInt(row.curveOutputWei),
+    minAmountRaw: BigInt(row.minAmountRaw),
     payee: row.payee,
+    tokenAddress: row.tokenAddress,
+    tokenDecimals: row.tokenDecimals,
     expiresAtMs: row.expiresAt.getTime(),
-    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
   };
 }
