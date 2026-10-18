@@ -15,9 +15,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json package-lock.json ./
-COPY agent.ts tsconfig.json ./
-COPY src ./src
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node agent.ts tsconfig.json ./
+COPY --chown=node:node src ./src
+
+USER node
 
 CMD ["npm", "start"]
