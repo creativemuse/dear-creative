@@ -3,12 +3,17 @@ import {
   approvalStatusEnum,
   deliveryChannelEnum,
   payMethodEnum,
+  postSourceEnum,
   postStatusEnum,
 } from "./schema";
 
 describe("schema enums", () => {
   it("includes draft posts for Adam publishToTurso", () => {
     expect(postStatusEnum).toContain("draft");
+  });
+
+  it("includes paragraph source for archive imports", () => {
+    expect(postSourceEnum).toEqual(["paragraph"]);
   });
 
   it("includes paywall pay methods from spec v2", () => {
