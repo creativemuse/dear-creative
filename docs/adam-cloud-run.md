@@ -17,7 +17,7 @@ Configure via `scripts/gcp/adam-gcp.env` (copy from `adam-gcp.env.example`).
 
 ## Deployer service account
 
-Grant these roles to the human or CI identity that runs `adam-bootstrap-service-account.sh` and `adam-deploy-cloud-run.sh`:
+Grant these roles to the human or CI identity that runs `adam-bootstrap-service-account.sh`, `adam-build-image.sh`, and `adam-deploy-cloud-run.sh`:
 
 | Role | Why |
 |------|-----|
@@ -26,7 +26,7 @@ Grant these roles to the human or CI identity that runs `adam-bootstrap-service-
 | `roles/iam.serviceAccountUser` (Service Account User) | Deploy Cloud Run as the runtime SA |
 | `roles/resourcemanager.projectIamAdmin` (Project IAM Admin) | Bind runtime SA roles on the project |
 | `roles/secretmanager.admin` (Secret Manager Admin) | Create secret containers and IAM bindings |
-| `roles/cloudbuild.builds.editor` (Cloud Build Editor) | `gcloud run deploy --source` builds |
+| `roles/cloudbuild.builds.editor` (Cloud Build Editor) | `adam-build-image.sh` and optional `--source` deploys |
 | `roles/artifactregistry.admin` (Artifact Registry Admin) | Push deploy artifacts (often required with Cloud Build) |
 | `roles/serviceusage.serviceUsageAdmin` (Service Usage Admin) | Enable required APIs on a new project |
 | `roles/storage.admin` (Storage Admin) | Cloud Build source staging bucket |
@@ -46,7 +46,15 @@ Typical grants:
 
 The runtime service account does **not** need `run.invoker` on itself; it uses ADC for Vertex. Callers hitting the Adam ADK URL must present an OIDC token.
 
-Optional: set `ADAM_CLOUD_BUILD_SA` in `adam-gcp.env` so `adam-deploy-cloud-run.sh` passes `--build-service-account` to isolate Cloud Build permissions from the runtime SA.
+Optional: set `ADAM_CLOUD_BUILD_SA` in `adam-gcp.env` so build/deploy scripts pass a dedicated Cloud Build service account.
+
+## Container image (Artifact Registry)
+
+- **Repository:** `us-east4-docker.pkg.dev/<GCP_PROJECT_ID>/dear-creative/adam`
+- **Default deploy:** digest-pinned `--image` (via **`ADAM_IMAGE`** or **`--image`**). Tags without a digest are rejected unless **`--allow-tag`** is passed.
+- **Example (current pushed image):** `us-east4-docker.pkg.dev/creative-ai-491118/dear-creative/adam@sha256:f91355e979fc57fead5d6a0f7787bcbfc4b9fbfb9380e7601340a76406b1d76d`
+- **Rollback:** redeploy the previous digest (keep the last known-good `@sha256:…` and run `adam-deploy-cloud-run.sh --image …` again). Cloud Run revisions are immutable per image pin.
+- **Fallback:** `./scripts/gcp/adam-deploy-cloud-run.sh --source` builds from `services/adam` at deploy time (slower, less reproducible).
 
 ## Cost guardrails
 
@@ -72,8 +80,9 @@ The token must match `ADAM_API_TOKEN` on the Dear Creative web app deployment.
 2. Authenticate: `gcloud auth login` and `gcloud auth application-default login` with the deployer roles above on that project.
 3. `./scripts/gcp/adam-bootstrap-service-account.sh` (or `./scripts/gcp/adam-bootstrap-service-account.sh --project <id>`)
 4. Add secret **versions** (interactive; values never committed).
-5. `./scripts/gcp/adam-deploy-cloud-run.sh`
-6. Smoke draft (approval queue only, no send): export the two env vars locally, then `./scripts/gcp/adam-smoke-draft-remote.sh`
+5. Build and push: `./scripts/gcp/adam-build-image.sh` (prints a digest-pinned URI).
+6. Deploy that digest: `ADAM_IMAGE=<uri@sha256:…> ./scripts/gcp/adam-deploy-cloud-run.sh` or `./scripts/gcp/adam-deploy-cloud-run.sh --image <uri@sha256:…>`.
+7. Smoke draft (approval queue only, no send): export the two env vars locally, then `./scripts/gcp/adam-smoke-draft-remote.sh`
 
 ## Prod image boot proof (local)
 

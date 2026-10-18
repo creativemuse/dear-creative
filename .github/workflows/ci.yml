@@ -32,6 +32,8 @@ jobs:
           npm run build:prod
       - name: Adam GCP scripts require project id
         run: ./scripts/gcp/adam-gcp-require-project.test.sh
+      - name: Adam GCP image digest validation
+        run: ./scripts/gcp/adam-gcp-image-ref.test.sh
       - name: Adam prod image boot proof
         env:
           GCP_PROJECT_ID: ci-boot-proof-local

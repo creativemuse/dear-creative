@@ -40,6 +40,7 @@ expect_project_required() {
 expect_project_required "${ROOT}/scripts/gcp/adam-docker-boot-proof.sh" "adam-docker-boot-proof.sh"
 expect_project_required "${ROOT}/scripts/gcp/adam-bootstrap-service-account.sh" "adam-bootstrap-service-account.sh"
 expect_project_required "${ROOT}/scripts/gcp/adam-deploy-cloud-run.sh" "adam-deploy-cloud-run.sh"
+expect_project_required "${ROOT}/scripts/gcp/adam-build-image.sh" "adam-build-image.sh"
 expect_project_required "${ROOT}/scripts/gcp/adam-smoke-draft-remote.sh" "adam-smoke-draft-remote.sh"
 
 unset GCP_PROJECT_ID
