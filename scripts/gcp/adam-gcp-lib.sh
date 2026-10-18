@@ -49,3 +49,25 @@ adam_gcp_require_project() {
   export GCP_PROJECT_ID="${project}"
   export GCP_REGION="${GCP_REGION:-us-east4}"
 }
+
+# Returns 0 when ref is acceptable for deploy (digest-pinned, or any tag if allow_tag).
+adam_gcp_validate_image_ref() {
+  local ref="$1"
+  local allow_tag="${2:-false}"
+  if [[ -z "${ref}" ]]; then
+    echo "Error: container image is required. Set ADAM_IMAGE, pass --image, or use --source." >&2
+    return 1
+  fi
+  if [[ "${ref}" =~ @sha256:[a-fA-F0-9]{64}$ ]]; then
+    return 0
+  fi
+  if [[ "${allow_tag}" == true || "${allow_tag}" == 1 ]]; then
+    return 0
+  fi
+  echo "Error: image must pin a digest (@sha256:...). Pass --allow-tag to deploy a mutable tag." >&2
+  return 1
+}
+
+adam_gcp_default_adam_image_repo() {
+  echo "us-east4-docker.pkg.dev/${GCP_PROJECT_ID}/dear-creative/adam"
+}
