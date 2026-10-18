@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["agent.ts", "src/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "vitest.config.ts"]
 }

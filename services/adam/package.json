@@ -7,7 +7,8 @@
     "node": ">=20.19"
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "build:agent": "tsc --noEmit -p tsconfig.agent.json",
     "test": "vitest run",
     "start": "npx @google/adk-devtools api_server . --port ${PORT:-8080}",
     "smoke:draft": "tsx src/smoke-draft.ts"
