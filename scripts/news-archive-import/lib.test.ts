@@ -52,9 +52,10 @@ describe("xml utils", () => {
     expect(stripCdata("<![CDATA[hello]]>")).toBe("hello");
   });
 
-  it("decodes entities exactly once including hex", () => {
+  it("decodes entities exactly once including hex and named entities", () => {
     expect(decodeXmlEntitiesOnce("&#x27; &amp;lt;")).toBe("' &lt;");
     expect(decodeXmlEntitiesOnce("&amp;amp;")).toBe("&amp;");
+    expect(decodeXmlEntitiesOnce("&quot;hi&quot; &apos;")).toBe('"hi" \'');
   });
 });
 
@@ -62,7 +63,7 @@ describe("parseRssItems", () => {
   it("handles CDATA and decodes titles/descriptions", () => {
     const items = parseRssItems(sampleRss);
     expect(items[0]?.title).toBe("Alpha & Co");
-    expect(items[0]?.description).toBe("Teaser &lt;bold&gt;");
+    expect(items[0]?.description).toBe("Teaser &lt;bold>");
     expect(items[1]?.guid).toBe(
       "https://news.creativeplatform.xyz/posts/beta-alt-guid",
     );

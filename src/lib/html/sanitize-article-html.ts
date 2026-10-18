@@ -1,4 +1,7 @@
-const ALLOWED_TAGS = new Set([
+import sanitizeHtml from "sanitize-html";
+import { decodeHtmlEntitiesOnce } from "./decode-html-entities-once";
+
+const ALLOWED_TAGS = [
   "p",
   "br",
   "strong",
@@ -19,49 +22,81 @@ const ALLOWED_TAGS = new Set([
   "img",
   "span",
   "div",
-]);
+] as const;
 
-const GLOBAL_STRIP = /<\/?(?:script|style|iframe|object|embed|form|input|button|textarea|select|link|meta)[^>]*>/gi;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+function normalizeUrlAttribute(raw: string | undefined): string {
+  if (!raw) return "";
+  let value = decodeHtmlEntitiesOnce(raw.trim());
+  value = value.replace(CONTROL_CHARS, "");
+  value = value.replace(/\s+/g, "");
+  return value;
+}
+
+function isAllowedHref(href: string): boolean {
+  if (!href) return false;
+  const lower = href.toLowerCase();
+  return (
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
+    lower.startsWith("mailto:")
+  );
+}
+
+function isAllowedImgSrc(src: string): boolean {
+  if (!src) return false;
+  const lower = src.toLowerCase();
+  return lower.startsWith("http://") || lower.startsWith("https://");
+}
 
 /**
  * Allowlisted sanitizer for imported archive HTML. Never pass raw `body_html` to
  * the DOM without running through this first.
  */
-const JAVASCRIPT_ANCHOR =
-  /<a\b[^>]*href\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)[^>]*>[\s\S]*?<\/a>/gi;
-
 export function sanitizeArticleHtml(raw: string): string {
-  let html = raw.replace(/<script\b[\s\S]*?<\/script>/gi, "");
-  html = html.replace(JAVASCRIPT_ANCHOR, "");
-  html = html.replace(GLOBAL_STRIP, "");
-  html = html.replace(/<([a-z0-9]+)(\s[^>]*)?>/gi, (full, tag: string, attrs = "") => {
-    const lower = tag.toLowerCase();
-    if (!ALLOWED_TAGS.has(lower)) {
-      return "";
-    }
-    if (lower === "a") {
-      const href = attrs.match(/\bhref="([^"]*)"/i)?.[1];
-      if (!href || /^javascript:/i.test(href.trim())) {
-        return "";
+  return sanitizeHtml(raw, {
+    allowedTags: [...ALLOWED_TAGS],
+    allowedAttributes: {
+      a: ["href", "rel"],
+      img: ["src", "alt", "loading"],
+    },
+    allowedSchemes: ["http", "https", "mailto"],
+    allowedSchemesByTag: {
+      img: ["http", "https"],
+    },
+    allowProtocolRelative: false,
+    exclusiveFilter(frame) {
+      if (frame.tag === "a") {
+        return !isAllowedHref(normalizeUrlAttribute(frame.attribs.href));
       }
-      const safeHref = href.replace(/"/g, "&quot;");
-      return `<a href="${safeHref}" rel="noopener noreferrer nofollow">`;
-    }
-    if (lower === "img") {
-      const src = attrs.match(/\bsrc="([^"]*)"/i)?.[1];
-      if (!src || /^javascript:/i.test(src.trim())) {
-        return "";
+      if (frame.tag === "img") {
+        return !isAllowedImgSrc(normalizeUrlAttribute(frame.attribs.src));
       }
-      const alt = attrs.match(/\balt="([^"]*)"/i)?.[1] ?? "";
-      const safeSrc = src.replace(/"/g, "&quot;");
-      const safeAlt = alt.replace(/"/g, "&quot;");
-      return `<img src="${safeSrc}" alt="${safeAlt}" loading="lazy" />`;
-    }
-    return `<${lower}>`;
-  });
-  html = html.replace(/<\/([a-z0-9]+)>/gi, (full, tag: string) => {
-    const lower = tag.toLowerCase();
-    return ALLOWED_TAGS.has(lower) ? `</${lower}>` : "";
-  });
-  return html.trim();
+      return false;
+    },
+    transformTags: {
+      a: (tagName, attribs) => {
+        const href = normalizeUrlAttribute(attribs.href);
+        return {
+          tagName,
+          attribs: {
+            href,
+            rel: "noopener noreferrer nofollow",
+          },
+        };
+      },
+      img: (tagName, attribs) => {
+        const src = normalizeUrlAttribute(attribs.src);
+        return {
+          tagName,
+          attribs: {
+            src,
+            alt: attribs.alt ?? "",
+            loading: "lazy",
+          },
+        };
+      },
+    },
+  }).trim();
 }

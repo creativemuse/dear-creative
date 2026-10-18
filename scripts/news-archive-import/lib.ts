@@ -1,6 +1,12 @@
 import type { PostArchiveUpsertRow } from "./schema";
 import { extractPostBodyHtmlFromPage } from "./post-body.js";
-import { decodeXmlEntitiesOnce, readTagInner } from "./xml-utils.js";
+import {
+  decodeXmlEntitiesOnce,
+  readContentEncoded,
+  readTagInner,
+} from "./xml-utils.js";
+
+export const ARTICLE_FETCH_TIMEOUT_MS = 30_000;
 
 export const DEFAULT_NEWS_ORIGIN = "https://news.creativeplatform.xyz";
 export const DEFAULT_RSS_URL = `${DEFAULT_NEWS_ORIGIN}/rss.xml`;
@@ -57,7 +63,10 @@ export type PlanPostArchiveResult = {
   wouldIdentityConflict: number;
 };
 
-export type FetchLike = (url: string) => Promise<Response>;
+export type FetchLike = (
+  url: string,
+  init?: RequestInit,
+) => Promise<Response>;
 
 export function normalizeCanonicalUrl(
   url: string,
@@ -117,15 +126,7 @@ export function parseRssItems(
     const link = readTagInner(block, "link");
     const guidRaw = readTagInner(block, "guid");
     const description = readTagInner(block, "description");
-    const contentEncoded =
-      readTagInner(block, "content:encoded") ??
-      block.match(/<content:encoded[^>]*>([\s\S]*?)<\/content:encoded>/i)?.[1]
-        ? decodeXmlEntitiesOnce(
-            block
-              .match(/<content:encoded[^>]*>([\s\S]*?)<\/content:encoded>/i)![1]!
-              .trim(),
-          )
-        : null;
+    const contentEncoded = readContentEncoded(block);
     const pubDateRaw = readTagInner(block, "pubDate");
 
     if (!title || !link) {
@@ -359,24 +360,29 @@ export function countFeedArchiveMatches(
   return { matches, feedOnly, archiveOnly };
 }
 
+async function fetchArticlePageHtml(
+  canonicalUrl: string,
+  fetchFn: FetchLike,
+): Promise<string> {
+  const response = await fetchFn(canonicalUrl, {
+    signal: AbortSignal.timeout(ARTICLE_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Article fetch failed (${response.status}): ${canonicalUrl}`,
+    );
+  }
+  return response.text();
+}
+
 export async function fetchArticleBodyHtml(
   canonicalUrl: string,
   fetchFn: FetchLike,
   prefetchedHtml?: string,
 ): Promise<string | null> {
   const html =
-    prefetchedHtml ??
-    (await (async () => {
-      const response = await fetchFn(canonicalUrl);
-      if (!response.ok) {
-        throw new Error(
-          `Article fetch failed (${response.status}): ${canonicalUrl}`,
-        );
-      }
-      return response.text();
-    })());
-  const fromEncoded = extractPostBodyHtmlFromPage(html);
-  return fromEncoded;
+    prefetchedHtml ?? (await fetchArticlePageHtml(canonicalUrl, fetchFn));
+  return extractPostBodyHtmlFromPage(html);
 }
 
 export async function candidatesToPostRows(
@@ -392,7 +398,7 @@ export async function candidatesToPostRows(
         candidate.canonicalUrl,
         fetchFn,
       );
-      bodyHtml = pageBody ?? bodyHtml;
+      bodyHtml = pageBody ?? candidate.contentEncoded;
     }
     rows.push({
       sourceGuid: candidate.sourceGuid,
