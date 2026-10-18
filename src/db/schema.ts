@@ -242,6 +242,8 @@ export const writers = sqliteTable(
   {
     id: text("id").primaryKey(),
     payoutSplitAddress: text("payout_split_address"),
+    /** Writer wallet receiving 90% on the PullSplit (used for splitHash verification). */
+    payoutWalletAddress: text("payout_wallet_address"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

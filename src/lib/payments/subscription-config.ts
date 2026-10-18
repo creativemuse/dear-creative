@@ -12,15 +12,6 @@ export function dearPlatformTreasuryAddress(): Address | null {
   return getAddress(raw);
 }
 
-/** Writer-side recipient in the PullSplit (90% allocation), sorted with treasury on-chain. */
-export function dearWriterSplitRecipientAddress(): Address | null {
-  const raw = process.env.DEAR_WRITER_SPLIT_RECIPIENT_ADDRESS?.trim();
-  if (!raw || !ADDRESS_RE.test(raw)) {
-    return null;
-  }
-  return getAddress(raw);
-}
-
 /** Block confirmations required before accepting a subscription payment tx. */
 export function subscriptionMinConfirmations(): number {
   const raw = process.env.SUBSCRIPTION_MIN_CONFIRMATIONS?.trim();

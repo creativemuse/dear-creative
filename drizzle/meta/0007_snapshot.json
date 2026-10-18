@@ -967,6 +967,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "payout_wallet_address": {
+          "name": "payout_wallet_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
