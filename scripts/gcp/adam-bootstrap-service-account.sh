@@ -3,12 +3,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=/dev/null
-source "${ROOT}/scripts/gcp/adam-gcp.env"
+# shellcheck source=adam-gcp-lib.sh
+source "${ROOT}/scripts/gcp/adam-gcp-lib.sh"
+adam_gcp_parse_args "$@"
+adam_gcp_source_env "${ROOT}"
+adam_gcp_require_project
 
-PROJECT="${GCP_PROJECT_ID:?}"
-REGION="${GCP_REGION:?}"
-SA_ID="${ADAM_RUNTIME_SA:?}"
+PROJECT="${GCP_PROJECT_ID}"
+REGION="${GCP_REGION}"
+SA_ID="${ADAM_RUNTIME_SA:?ADAM_RUNTIME_SA is required in adam-gcp.env}"
 SA_EMAIL="${SA_ID}@${PROJECT}.iam.gserviceaccount.com"
 TOKEN_SECRET="${ADAM_SECRET_DEAR_APP_API_TOKEN:?}"
 BASE_URL_SECRET="${ADAM_SECRET_DEAR_APP_BASE_URL:?}"
@@ -41,6 +44,8 @@ done
 
 cat <<EOF
 Bootstrap complete (no secret values written).
+Project: ${PROJECT}
+Region: ${REGION}
 Runtime SA: ${SA_EMAIL}
 Roles: roles/logging.logWriter, roles/aiplatform.user, secretAccessor on:
   - ${TOKEN_SECRET}

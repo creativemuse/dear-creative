@@ -3,6 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=adam-gcp-lib.sh
+source "${ROOT}/scripts/gcp/adam-gcp-lib.sh"
+adam_gcp_parse_args "$@"
+adam_gcp_require_project
+
 IMAGE="${ADAM_DOCKER_BOOT_IMAGE:-dear-creative-adam:boot-proof}"
 CONTAINER="dear-creative-adam-boot-proof-$$"
 LOG_FILE="${ROOT}/.adam-docker-boot.log"
