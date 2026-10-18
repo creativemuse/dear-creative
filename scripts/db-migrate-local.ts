@@ -12,9 +12,8 @@ const url = resolveDatabaseUrl();
 
 if (!isLocalLibsqlUrl(url)) {
   console.error(
-    "Refusing to migrate: database URL must be a local file: or :memory: libSQL URL.",
+    "Refusing to migrate: database URL must be a local file: or :memory: libSQL URL (unset TURSO_DATABASE_URL or use LOCAL_DATABASE_URL).",
   );
-  console.error(`Got: ${url}`);
   process.exit(1);
 }
 
@@ -27,7 +26,7 @@ async function main() {
   const client = createDbClient(url);
   const db = drizzle({ client });
   await migrate(db, { migrationsFolder: "./drizzle" });
-  console.log(`Applied migrations to ${url}`);
+  console.log("Applied migrations to local libSQL database.");
 }
 
 main().catch((error: unknown) => {
