@@ -60,6 +60,16 @@ describe("xml utils", () => {
 });
 
 describe("parseRssItems", () => {
+  it("does not throw on invalid numeric entities in descriptions", () => {
+    const xml = sampleRss.replace(
+      "<description><![CDATA[Teaser &amp;lt;bold&gt;]]></description>",
+      "<description><![CDATA[Bad &#NaN; and &#xD800; ok]]></description>",
+    );
+    const items = parseRssItems(xml);
+    expect(items[0]?.description).toContain("&#NaN;");
+    expect(items[0]?.description).toContain("&#xD800;");
+  });
+
   it("handles CDATA and decodes titles/descriptions", () => {
     const items = parseRssItems(sampleRss);
     expect(items[0]?.title).toBe("Alpha & Co");
@@ -217,6 +227,20 @@ describe("runArchiveImportDryRun", () => {
     expect(summary.importItems).toBe(3);
     expect(summary.wouldInsert).toBe(3);
     expect(summary.archiveOnly).toBe(1);
+  });
+
+  it("applies listing fetch timeout to RSS, home, and archive requests", async () => {
+    const fetchFn = vi.fn<FetchLike>(async (url: string, init?: RequestInit) => {
+      expect(init?.signal).toBeDefined();
+      return mockTextResponse(sampleRss);
+    });
+    await runArchiveImportDryRun({
+      fetch: fetchFn,
+      schemaReady: true,
+      schemaMissing: [],
+      fetchBodies: false,
+    });
+    expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
   it("propagates fetch failures for listing pages", async () => {

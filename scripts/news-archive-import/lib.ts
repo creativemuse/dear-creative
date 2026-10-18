@@ -7,6 +7,7 @@ import {
 } from "./xml-utils.js";
 
 export const ARTICLE_FETCH_TIMEOUT_MS = 30_000;
+export const LISTING_FETCH_TIMEOUT_MS = 30_000;
 
 export const DEFAULT_NEWS_ORIGIN = "https://news.creativeplatform.xyz";
 export const DEFAULT_RSS_URL = `${DEFAULT_NEWS_ORIGIN}/rss.xml`;
@@ -446,10 +447,13 @@ export async function runArchiveImportDryRun(input: {
   const archiveUrl = input.archiveUrl ?? DEFAULT_ARCHIVE_URL;
   const siteOrigin = input.siteOrigin ?? DEFAULT_NEWS_ORIGIN;
 
+  const listingFetchInit: RequestInit = {
+    signal: AbortSignal.timeout(LISTING_FETCH_TIMEOUT_MS),
+  };
   const [rssRes, homeRes, archiveRes] = await Promise.all([
-    fetchFn(rssUrl),
-    fetchFn(indexUrl),
-    fetchFn(archiveUrl),
+    fetchFn(rssUrl, listingFetchInit),
+    fetchFn(indexUrl, listingFetchInit),
+    fetchFn(archiveUrl, listingFetchInit),
   ]);
   if (!rssRes.ok) {
     throw new Error(`RSS fetch failed: ${rssRes.status} ${rssUrl}`);
