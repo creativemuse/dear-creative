@@ -5,7 +5,7 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import {
-  CRTVAI_METOKEN_ADDRESS,
+  CRTVAI_TOKEN_ADDRESS,
   METOKEN_CURVE_RPC_TIMEOUT_MS,
   METOKENS_DIAMOND_ADDRESS,
 } from "./metoken-curve-config";
@@ -64,7 +64,7 @@ async function readMeTokensMintedForDepositLive(
     address: METOKENS_DIAMOND_ADDRESS,
     abi: DIAMOND_ABI,
     functionName: "calculateMeTokensMinted",
-    args: [CRTVAI_METOKEN_ADDRESS, assetsUsdc6],
+    args: [CRTVAI_TOKEN_ADDRESS, assetsUsdc6],
   });
 }
 

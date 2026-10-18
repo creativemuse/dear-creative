@@ -5,7 +5,8 @@ export const BASE_CHAIN_ID = 8453;
 export const METOKENS_DIAMOND_ADDRESS =
   "0xba5502db2aC2cBff189965e991C07109B14eB3f5" as const;
 
-export const CRTVAI_METOKEN_ADDRESS =
+/** CRTVAI ERC-20 on Base (not the meTokens Diamond). */
+export const CRTVAI_TOKEN_ADDRESS =
   "0xecb695544a3d2a64d579b3828f3f60f6932f4846" as const;
 
 export const CRTVAI_DECIMALS = 18;

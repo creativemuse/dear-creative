@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SubscriptionPlan } from "@/db/schema";
+import { BASE_CHAIN_ID, SUBSCRIPTION_QUOTE_SLIPPAGE_BPS } from "./metoken-curve-config";
 
 export type SubscriptionQuoteSignFields = {
   quoteId: string;
@@ -14,6 +15,20 @@ export type SubscriptionQuoteSignFields = {
   expiresAtMs: number;
   slippageBps: number;
   chainId: number;
+};
+
+export type StoredSubscriptionQuoteRow = {
+  id: string;
+  privyUserId: string;
+  wallet: string;
+  writerId: string;
+  plan: SubscriptionPlan;
+  usdCents: number;
+  minCrtvaiWei: string;
+  curveOutputWei: string;
+  payee: string;
+  expiresAt: Date;
+  signature: string;
 };
 
 function signingSecret(): string | null {
@@ -42,6 +57,25 @@ function buildPayload(fields: SubscriptionQuoteSignFields): string {
   ].join("|");
 }
 
+export function signFieldsFromStoredQuote(
+  row: StoredSubscriptionQuoteRow,
+): SubscriptionQuoteSignFields {
+  return {
+    quoteId: row.id,
+    privyUserId: row.privyUserId,
+    wallet: row.wallet,
+    writerId: row.writerId,
+    plan: row.plan,
+    usdCents: row.usdCents,
+    minCrtvaiWei: BigInt(row.minCrtvaiWei),
+    curveOutputWei: BigInt(row.curveOutputWei),
+    payee: row.payee,
+    expiresAtMs: row.expiresAt.getTime(),
+    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
+    chainId: BASE_CHAIN_ID,
+  };
+}
+
 export function signSubscriptionQuote(
   fields: SubscriptionQuoteSignFields,
 ): string {
@@ -67,4 +101,11 @@ export function verifySubscriptionQuoteSignature(
   } catch {
     return signature === expected;
   }
+}
+
+export function verifyStoredQuoteSignature(
+  row: StoredSubscriptionQuoteRow,
+): boolean {
+  const fields = signFieldsFromStoredQuote(row);
+  return verifySubscriptionQuoteSignature(fields, row.signature);
 }
