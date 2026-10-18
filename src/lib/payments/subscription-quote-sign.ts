@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SubscriptionPlan } from "@/db/schema";
+import { BASE_CHAIN_ID, SUBSCRIPTION_QUOTE_SLIPPAGE_BPS } from "./metoken-curve-config";
 
 export const MIN_QUOTE_SIGNING_SECRET_BYTES = 32;
 
@@ -24,9 +25,26 @@ export class QuoteSigningNotConfiguredError extends Error {
   }
 }
 
+export type StoredSubscriptionQuoteRow = {
+  id: string;
+  privyUserId: string;
+  wallet: string;
+  writerId: string;
+  plan: SubscriptionPlan;
+  usdCents: number;
+  minCrtvaiWei: string;
+  curveOutputWei: string;
+  payee: string;
+  expiresAt: Date;
+  signature: string;
+};
+
 function signingSecret(): string | null {
   const raw = process.env.QUOTE_SIGNING_SECRET?.trim();
-  if (!raw || raw.length < MIN_QUOTE_SIGNING_SECRET_BYTES) {
+  if (
+    !raw ||
+    Buffer.byteLength(raw, "utf8") < MIN_QUOTE_SIGNING_SECRET_BYTES
+  ) {
     return null;
   }
   return raw;
@@ -51,6 +69,25 @@ function buildPayload(fields: SubscriptionQuoteSignFields): string {
     String(fields.slippageBps),
     String(fields.chainId),
   ].join("|");
+}
+
+export function signFieldsFromStoredQuote(
+  row: StoredSubscriptionQuoteRow,
+): SubscriptionQuoteSignFields {
+  return {
+    quoteId: row.id,
+    privyUserId: row.privyUserId,
+    wallet: row.wallet,
+    writerId: row.writerId,
+    plan: row.plan,
+    usdCents: row.usdCents,
+    minCrtvaiWei: BigInt(row.minCrtvaiWei),
+    curveOutputWei: BigInt(row.curveOutputWei),
+    payee: row.payee,
+    expiresAtMs: row.expiresAt.getTime(),
+    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
+    chainId: BASE_CHAIN_ID,
+  };
 }
 
 export function signSubscriptionQuote(
@@ -85,4 +122,11 @@ export function verifySubscriptionQuoteSignature(
   } catch {
     return false;
   }
+}
+
+export function verifyStoredQuoteSignature(
+  row: StoredSubscriptionQuoteRow,
+): boolean {
+  const fields = signFieldsFromStoredQuote(row);
+  return verifySubscriptionQuoteSignature(fields, row.signature);
 }

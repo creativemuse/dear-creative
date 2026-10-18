@@ -1,71 +1,70 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Address } from "viem";
 import {
-  resetWriterSplitReaderForTests,
-  setWriterSplitReaderForTests,
+  buildSortedDearSplit,
+  computeSplitV2Hash,
+  resetPullSplitReaderForTests,
+  setPullSplitReaderForTests,
   verifyWriterSplit,
 } from "./writer-split-verify";
 
 const SPLIT = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as Address;
-const IMMUTABLE_CONTROLLER =
-  "0x0000000000000000000000000000000000000000" as Address;
-
-function mockSplit(snapshot: {
-  recipients: Address[];
-  allocations: bigint[];
-  controller?: Address;
-}) {
-  setWriterSplitReaderForTests({
-    readWriterSplit: vi.fn().mockResolvedValue({
-      controller: snapshot.controller ?? IMMUTABLE_CONTROLLER,
-      recipients: snapshot.recipients,
-      allocations: snapshot.allocations,
-    }),
-  });
-}
+const WRITER = "0x1111111111111111111111111111111111111111" as Address;
+const TREASURY = "0x2222222222222222222222222222222222222222" as Address;
+const ZERO = "0x0000000000000000000000000000000000000000" as Address;
 
 describe("verifyWriterSplit", () => {
   afterEach(() => {
-    resetWriterSplitReaderForTests();
+    resetPullSplitReaderForTests();
   });
 
-  it("accepts exactly 90% / 10% allocations on an immutable split", async () => {
-    mockSplit({
-      recipients: [
-        "0x1111111111111111111111111111111111111111",
-        "0x2222222222222222222222222222222222222222",
-      ],
-      allocations: [BigInt(900_000), BigInt(100_000)],
+  it("accepts immutable PullSplit whose splitHash matches 90/10 params", async () => {
+    const expected = buildSortedDearSplit({
+      writerRecipient: WRITER,
+      treasuryAddress: TREASURY,
     });
-    const result = await verifyWriterSplit(SPLIT);
+    setPullSplitReaderForTests({
+      readPullSplitWallet: vi.fn().mockResolvedValue({
+        splitHash: computeSplitV2Hash(expected),
+        owner: ZERO,
+      }),
+    });
+    const result = await verifyWriterSplit(SPLIT, {
+      writerRecipient: WRITER,
+      treasuryAddress: TREASURY,
+    });
     expect(result.ok).toBe(true);
   });
 
-  it("rejects mutable splits with a non-zero controller", async () => {
-    mockSplit({
-      recipients: [
-        "0x1111111111111111111111111111111111111111",
-        "0x2222222222222222222222222222222222222222",
-      ],
-      allocations: [BigInt(900_000), BigInt(100_000)],
-      controller: "0x3333333333333333333333333333333333333333",
+  it("rejects mutable splits with a non-zero owner", async () => {
+    const expected = buildSortedDearSplit({
+      writerRecipient: WRITER,
+      treasuryAddress: TREASURY,
     });
-    const result = await verifyWriterSplit(SPLIT);
+    setPullSplitReaderForTests({
+      readPullSplitWallet: vi.fn().mockResolvedValue({
+        splitHash: computeSplitV2Hash(expected),
+        owner: "0x3333333333333333333333333333333333333333",
+      }),
+    });
+    const result = await verifyWriterSplit(SPLIT, {
+      writerRecipient: WRITER,
+      treasuryAddress: TREASURY,
+    });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).toMatch(/immutable/i);
-    }
   });
 
-  it("rejects wrong allocation ratio", async () => {
-    mockSplit({
-      recipients: [
-        "0x1111111111111111111111111111111111111111",
-        "0x2222222222222222222222222222222222222222",
-      ],
-      allocations: [BigInt(800_000), BigInt(200_000)],
+  it("rejects when on-chain splitHash does not match expected layout", async () => {
+    setPullSplitReaderForTests({
+      readPullSplitWallet: vi.fn().mockResolvedValue({
+        splitHash: `0x${"ab".repeat(32)}`,
+        owner: ZERO,
+      }),
     });
-    const result = await verifyWriterSplit(SPLIT);
+    const result = await verifyWriterSplit(SPLIT, {
+      writerRecipient: WRITER,
+      treasuryAddress: TREASURY,
+    });
     expect(result.ok).toBe(false);
   });
 });

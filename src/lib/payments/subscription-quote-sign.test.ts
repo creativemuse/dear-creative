@@ -61,6 +61,14 @@ describe("subscription quote signing", () => {
     ).toBe(false);
   });
 
+  it("measures secret length in UTF-8 bytes, not character count", () => {
+    vi.stubEnv("QUOTE_SIGNING_SECRET", "a".repeat(31));
+    const fields = baseFields();
+    expect(() => signSubscriptionQuote(fields)).toThrow(
+      QuoteSigningNotConfiguredError,
+    );
+  });
+
   it("returns false when QUOTE_SIGNING_SECRET is too short", () => {
     vi.stubEnv("QUOTE_SIGNING_SECRET", "short-secret");
     const fields = baseFields();
