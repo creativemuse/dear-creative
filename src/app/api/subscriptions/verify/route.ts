@@ -48,9 +48,13 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof SubscriptionVerifyError) {
+      const headers =
+        error.retryAfterSeconds !== undefined
+          ? { "Retry-After": String(error.retryAfterSeconds) }
+          : undefined;
       return NextResponse.json(
         { error: error.message, code: error.code },
-        { status: error.status },
+        { status: error.status, headers },
       );
     }
     throw error;

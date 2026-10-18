@@ -87,6 +87,7 @@ async function seedQuote(options?: {
   await testDb.insert(writers).values({
     id: writerId,
     payoutSplitAddress: PAYEE_SPLIT,
+    payoutWalletAddress: WRITER_RECIPIENT,
   });
 
   const signFields = {
@@ -168,7 +169,6 @@ describe("POST /api/subscriptions/verify", () => {
     testDb = await createTestDb();
     vi.stubEnv("QUOTE_SIGNING_SECRET", QUOTE_SIGNING_SECRET);
     vi.stubEnv("DEAR_PLATFORM_TREASURY_ADDRESS", TREASURY);
-    vi.stubEnv("DEAR_WRITER_SPLIT_RECIPIENT_ADDRESS", WRITER_RECIPIENT);
     setFlag(true);
     setPaymentsLinkedWalletResolverForTests(async () => ({
       privyUserId: "did:privy:test-user",

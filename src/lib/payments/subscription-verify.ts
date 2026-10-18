@@ -8,10 +8,7 @@ import {
   writers,
 } from "@/db/schema";
 import { CRTVAI_TOKEN_ADDRESS } from "./metoken-curve-config";
-import {
-  dearPlatformTreasuryAddress,
-  dearWriterSplitRecipientAddress,
-} from "./subscription-config";
+import { dearPlatformTreasuryAddress } from "./subscription-config";
 import {
   ChainTxUnavailableError,
   fetchCrtvaiTransfer,
@@ -35,12 +32,27 @@ import { getAddress } from "viem";
 export class SubscriptionVerifyError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly retryAfterSeconds?: number;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    retryAfterSeconds?: number,
+  ) {
     super(message);
     this.code = code;
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+function isSqliteBusyError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("database is locked") ||
+    message.includes("SQLITE_BUSY")
+  );
 }
 
 export type VerifySubscriptionInput = {
@@ -148,7 +160,7 @@ export async function verifySubscriptionPayment(
     .where(eq(writers.id, quote.writerId))
     .limit(1);
 
-  if (!writer?.payoutSplitAddress) {
+  if (!writer?.payoutSplitAddress || !writer.payoutWalletAddress) {
     throw new SubscriptionVerifyError(
       "paid_signup_unavailable",
       "Paid signup unavailable for this writer",
@@ -165,8 +177,7 @@ export async function verifySubscriptionPayment(
   }
 
   const treasury = dearPlatformTreasuryAddress();
-  const writerRecipient = dearWriterSplitRecipientAddress();
-  if (!treasury || !writerRecipient) {
+  if (!treasury) {
     throw new SubscriptionVerifyError(
       "paid_signup_unavailable",
       "Paid signup split configuration is incomplete",
@@ -175,7 +186,7 @@ export async function verifySubscriptionPayment(
   }
 
   const splitVerification = await verifyWriterSplit(payeeAddress, {
-    writerRecipient,
+    writerRecipient: getAddress(writer.payoutWalletAddress),
     treasuryAddress: treasury,
   });
   if (!splitVerification.ok) {
@@ -197,6 +208,7 @@ export async function verifySubscriptionPayment(
       txHash,
       subscriptionMinConfirmations(),
       payeeAddress,
+      [payer, signer],
     );
   } catch (error) {
     if (error instanceof ChainTxUnavailableError) {
@@ -284,7 +296,8 @@ export async function verifySubscriptionPayment(
   const subscriptionId = randomUUID();
   const periodMs = subscriptionPeriodMs(quote.plan);
 
-  return db.transaction(async (tx) => {
+  const creditLedgerAndSubscription = () =>
+    db.transaction(async (tx) => {
     await tx
       .insert(paymentLedger)
       .values({
@@ -418,6 +431,33 @@ export async function verifySubscriptionPayment(
       periodEnd: periodEnd.toISOString(),
     };
   });
+
+  try {
+    return await creditLedgerAndSubscription();
+  } catch (error) {
+    if (error instanceof SubscriptionVerifyError) {
+      throw error;
+    }
+    if (isSqliteBusyError(error)) {
+      try {
+        return await creditLedgerAndSubscription();
+      } catch (retryError) {
+        if (retryError instanceof SubscriptionVerifyError) {
+          throw retryError;
+        }
+        if (isSqliteBusyError(retryError)) {
+          throw new SubscriptionVerifyError(
+            "verification_contention",
+            "Another verification is in progress; retry shortly.",
+            409,
+            1,
+          );
+        }
+        throw retryError;
+      }
+    }
+    throw error;
+  }
 }
 
 async function finishIdempotentFromLedger(

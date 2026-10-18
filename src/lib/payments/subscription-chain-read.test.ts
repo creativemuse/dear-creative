@@ -5,14 +5,21 @@ import { CRTVAI_TOKEN_ADDRESS } from "./metoken-curve-config";
 
 const PAYEE = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Address;
 const OTHER = "0xcccccccccccccccccccccccccccccccccccccccc" as Address;
+const PAYER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Address;
+const THIRD_PARTY =
+  "0xdddddddddddddddddddddddddddddddddddddddd" as Address;
 
-function transferLog(to: Address, value: bigint, from?: Address) {
+function addressTopic(address: Address) {
+  return `0x${address.slice(2).padStart(64, "0")}`;
+}
+
+function transferLog(from: Address, to: Address, value: bigint) {
   return {
     address: CRTVAI_TOKEN_ADDRESS,
     topics: [
       "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-      `0x${"aa".repeat(32)}`,
-      `0x${to.slice(2).padStart(64, "0")}`,
+      addressTopic(from),
+      addressTopic(to),
     ],
     data: `0x${value.toString(16).padStart(64, "0")}`,
     blockNumber: BigInt(1),
@@ -30,8 +37,8 @@ describe("extractCrtvaiTransferFromReceipt", () => {
       status: "success",
       blockNumber: BigInt(100),
       logs: [
-        transferLog(OTHER, BigInt(50)),
-        transferLog(PAYEE, BigInt(1000)),
+        transferLog(PAYER, OTHER, BigInt(50)),
+        transferLog(PAYER, PAYEE, BigInt(1000)),
       ],
     } as unknown as TransactionReceipt;
 
@@ -40,18 +47,19 @@ describe("extractCrtvaiTransferFromReceipt", () => {
       1_700_000_000,
       3,
       PAYEE,
+      [PAYER],
     );
     expect(observation.to.toLowerCase()).toBe(PAYEE.toLowerCase());
     expect(observation.value).toBe(BigInt(1000));
   });
 
-  it("sums multiple CRTVAI transfers to the same payee", () => {
+  it("sums multiple CRTVAI transfers to the same payee from allowed payers", () => {
     const receipt = {
       status: "success",
       blockNumber: BigInt(100),
       logs: [
-        transferLog(PAYEE, BigInt(400)),
-        transferLog(PAYEE, BigInt(600)),
+        transferLog(PAYER, PAYEE, BigInt(400)),
+        transferLog(PAYER, PAYEE, BigInt(600)),
       ],
     } as unknown as TransactionReceipt;
 
@@ -60,7 +68,47 @@ describe("extractCrtvaiTransferFromReceipt", () => {
       1_700_000_000,
       3,
       PAYEE,
+      [PAYER],
     );
     expect(observation.value).toBe(BigInt(1000));
+  });
+
+  it("ignores third-party transfers to the payee when summing payer amount", () => {
+    const receipt = {
+      status: "success",
+      blockNumber: BigInt(100),
+      logs: [
+        transferLog(THIRD_PARTY, PAYEE, BigInt(1_000_000)),
+        transferLog(PAYER, PAYEE, BigInt(400)),
+      ],
+    } as unknown as TransactionReceipt;
+
+    const observation = extractCrtvaiTransferFromReceipt(
+      receipt,
+      1_700_000_000,
+      3,
+      PAYEE,
+      [PAYER],
+    );
+    expect(observation.value).toBe(BigInt(400));
+    expect(observation.from.toLowerCase()).toBe(PAYER.toLowerCase());
+  });
+
+  it("throws when only third-party transfers reach the payee", () => {
+    const receipt = {
+      status: "success",
+      blockNumber: BigInt(100),
+      logs: [transferLog(THIRD_PARTY, PAYEE, BigInt(1_000_000))],
+    } as unknown as TransactionReceipt;
+
+    expect(() =>
+      extractCrtvaiTransferFromReceipt(
+        receipt,
+        1_700_000_000,
+        3,
+        PAYEE,
+        [PAYER],
+      ),
+    ).toThrow("crtvai_transfer_missing");
   });
 });

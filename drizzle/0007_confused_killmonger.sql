@@ -19,6 +19,7 @@ CREATE INDEX `subscription_quotes_privy_writer_plan_created_idx` ON `subscriptio
 CREATE TABLE `writers` (
 	`id` text PRIMARY KEY NOT NULL,
 	`payout_split_address` text,
+	`payout_wallet_address` text,
 	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL
 );
 --> statement-breakpoint

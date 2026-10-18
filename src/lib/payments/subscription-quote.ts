@@ -27,10 +27,7 @@ import {
   type SubscriptionQuoteSignFields,
 } from "./subscription-quote-sign";
 import { usdCentsForPlan, usdc6FromUsdCents } from "./subscription-pricing";
-import {
-  dearPlatformTreasuryAddress,
-  dearWriterSplitRecipientAddress,
-} from "./subscription-config";
+import { dearPlatformTreasuryAddress } from "./subscription-config";
 import { verifyWriterSplit } from "./writer-split-verify";
 import { getAddress } from "viem";
 
@@ -150,7 +147,7 @@ export async function createSubscriptionQuote(
     );
   }
 
-  if (!writer.payoutSplitAddress) {
+  if (!writer.payoutSplitAddress || !writer.payoutWalletAddress) {
     throw new SubscriptionQuoteError(
       "paid_signup_unavailable",
       "Paid signup unavailable for this writer",
@@ -160,8 +157,7 @@ export async function createSubscriptionQuote(
 
   const payeeAddress = getAddress(writer.payoutSplitAddress);
   const treasury = dearPlatformTreasuryAddress();
-  const writerRecipient = dearWriterSplitRecipientAddress();
-  if (!treasury || !writerRecipient) {
+  if (!treasury) {
     throw new SubscriptionQuoteError(
       "paid_signup_unavailable",
       "Paid signup split configuration is incomplete",
@@ -170,7 +166,7 @@ export async function createSubscriptionQuote(
   }
 
   const splitVerification = await verifyWriterSplit(payeeAddress, {
-    writerRecipient,
+    writerRecipient: getAddress(writer.payoutWalletAddress),
     treasuryAddress: treasury,
   });
   if (!splitVerification.ok) {
