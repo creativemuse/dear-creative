@@ -10,6 +10,10 @@ import {
 export const postStatusEnum = ["draft", "published"] as const;
 export type PostStatus = (typeof postStatusEnum)[number];
 
+/** Imported Paragraph archive rows; null means Adam newsletter content. */
+export const postSourceEnum = ["paragraph"] as const;
+export type PostSource = (typeof postSourceEnum)[number];
+
 export const subscriberStatusEnum = [
   "pending",
   "subscribed",
@@ -84,6 +88,10 @@ export const posts = sqliteTable(
     teaserText: text("teaser_text"),
     emailSubject: text("email_subject"),
     emailHtml: text("email_html"),
+    bodyHtml: text("body_html"),
+    canonicalUrl: text("canonical_url"),
+    sourceGuid: text("source_guid"),
+    source: text("source", { enum: postSourceEnum }),
     sponsorId: text("sponsor_id").references(() => sponsors.id),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -94,7 +102,10 @@ export const posts = sqliteTable(
   },
   (table) => [
     uniqueIndex("posts_slug_unique").on(table.slug),
+    uniqueIndex("posts_canonical_url_unique").on(table.canonicalUrl),
+    uniqueIndex("posts_source_guid_unique").on(table.sourceGuid),
     index("posts_status_published_at_idx").on(table.status, table.publishedAt),
+    index("posts_source_idx").on(table.source),
   ],
 );
 
