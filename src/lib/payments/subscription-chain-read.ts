@@ -23,6 +23,12 @@ export type CrtvaiTransferObservation = {
   logEmitter: Address;
 };
 
+export class ChainTxUnavailableError extends Error {
+  constructor() {
+    super("Transaction verification is temporarily unavailable.");
+  }
+}
+
 export type ChainTxReader = {
   fetchCrtvaiTransfer(
     txHash: Hash,
@@ -41,10 +47,7 @@ export function resetChainTxReaderForTests(): void {
 }
 
 function alchemyRpcUrl(): string {
-  const key =
-    process.env.ALCHEMY_API_KEY?.trim() ||
-    process.env.VITE_ALCHEMY_API_KEY?.trim() ||
-    "";
+  const key = process.env.ALCHEMY_API_KEY?.trim() ?? "";
   return key
     ? `https://base-mainnet.g.alchemy.com/v2/${key}`
     : "https://mainnet.base.org";
@@ -95,31 +98,51 @@ export function extractCrtvaiTransferFromReceipt(
   };
 }
 
+function isExpectedChainError(message: string): boolean {
+  return (
+    message === "insufficient_confirmations" ||
+    message === "crtvai_transfer_missing" ||
+    message === "transaction_not_successful" ||
+    message === "receipt_not_found"
+  );
+}
+
 async function fetchCrtvaiTransferLive(
   txHash: Hash,
   minConfirmations: number,
 ): Promise<CrtvaiTransferObservation> {
-  const client = createBaseClient();
-  const receipt = await client.getTransactionReceipt({ hash: txHash });
-  if (!receipt) {
-    throw new Error("receipt_not_found");
-  }
-  if (receipt.status !== "success") {
-    throw new Error("transaction_not_successful");
-  }
+  try {
+    const client = createBaseClient();
+    const receipt = await client.getTransactionReceipt({ hash: txHash });
+    if (!receipt) {
+      throw new Error("receipt_not_found");
+    }
+    if (receipt.status !== "success") {
+      throw new Error("transaction_not_successful");
+    }
 
-  const block = await client.getBlock({ blockNumber: receipt.blockNumber });
-  const head = await client.getBlockNumber();
-  const confirmations = Number(head - receipt.blockNumber) + 1;
-  if (confirmations < minConfirmations) {
-    throw new Error("insufficient_confirmations");
-  }
+    const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+    const head = await client.getBlockNumber();
+    const confirmations = Number(head - receipt.blockNumber) + 1;
+    if (confirmations < minConfirmations) {
+      throw new Error("insufficient_confirmations");
+    }
 
-  return extractCrtvaiTransferFromReceipt(
-    receipt,
-    Number(block.timestamp),
-    confirmations,
-  );
+    return extractCrtvaiTransferFromReceipt(
+      receipt,
+      Number(block.timestamp),
+      confirmations,
+    );
+  } catch (error) {
+    if (error instanceof ChainTxUnavailableError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : "";
+    if (isExpectedChainError(message)) {
+      throw error instanceof Error ? error : new ChainTxUnavailableError();
+    }
+    throw new ChainTxUnavailableError();
+  }
 }
 
 export async function fetchCrtvaiTransfer(
@@ -127,7 +150,21 @@ export async function fetchCrtvaiTransfer(
   minConfirmations: number,
 ): Promise<CrtvaiTransferObservation> {
   if (chainReaderOverride !== undefined && chainReaderOverride !== null) {
-    return chainReaderOverride.fetchCrtvaiTransfer(txHash, minConfirmations);
+    try {
+      return await chainReaderOverride.fetchCrtvaiTransfer(
+        txHash,
+        minConfirmations,
+      );
+    } catch (error) {
+      if (error instanceof ChainTxUnavailableError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "";
+      if (isExpectedChainError(message)) {
+        throw error instanceof Error ? error : new ChainTxUnavailableError();
+      }
+      throw new ChainTxUnavailableError();
+    }
   }
   return fetchCrtvaiTransferLive(txHash, minConfirmations);
 }

@@ -8,7 +8,10 @@ import {
   writers,
 } from "@/db/schema";
 import { CRTVAI_TOKEN_ADDRESS } from "./metoken-curve-config";
-import { fetchCrtvaiTransfer } from "./subscription-chain-read";
+import {
+  ChainTxUnavailableError,
+  fetchCrtvaiTransfer,
+} from "./subscription-chain-read";
 import {
   quoteSettlementDeadlineMs,
   subscriptionMinConfirmations,
@@ -16,6 +19,7 @@ import {
 } from "./subscription-config";
 import { allocateGrossCrtvaiWei } from "./subscription-ledger-math";
 import {
+  isQuoteSigningConfigured,
   verifyStoredQuoteSignature,
   type StoredSubscriptionQuoteRow,
 } from "./subscription-quote-sign";
@@ -66,6 +70,14 @@ export async function verifySubscriptionPayment(
 ): Promise<VerifySubscriptionResult> {
   const nowMs = options?.nowMs ?? Date.now();
   const txHash = normalizeTxHash(input.txHash);
+
+  if (!isQuoteSigningConfigured()) {
+    throw new SubscriptionVerifyError(
+      "quote_signing_unavailable",
+      "Quote signing is not configured",
+      503,
+    );
+  }
 
   const [existingLedger] = await db
     .select()
@@ -172,7 +184,14 @@ export async function verifySubscriptionPayment(
       subscriptionMinConfirmations(),
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "chain_read_failed";
+    if (error instanceof ChainTxUnavailableError) {
+      throw new SubscriptionVerifyError(
+        "chain_unavailable",
+        error.message,
+        503,
+      );
+    }
+    const message = error instanceof Error ? error.message : "";
     if (message === "insufficient_confirmations") {
       throw new SubscriptionVerifyError(
         "insufficient_confirmations",
@@ -195,9 +214,9 @@ export async function verifySubscriptionPayment(
       );
     }
     throw new SubscriptionVerifyError(
-      "chain_read_failed",
-      "Could not verify transaction on Base",
-      502,
+      "chain_unavailable",
+      "Transaction verification is temporarily unavailable.",
+      503,
     );
   }
 

@@ -28,6 +28,7 @@ import {
 } from "@/lib/payments/metoken-curve-config";
 import { applySlippageMinCrtvaiWei } from "@/lib/payments/metoken-curve-math";
 import {
+  MeTokenCurveUnavailableError,
   setMeTokenCurveReaderForTests,
   resetMeTokenCurveReaderForTests,
 } from "@/lib/payments/metoken-curve-read";
@@ -45,6 +46,7 @@ vi.mock("@/db/client", () => ({
 
 const SIGNER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
 const PAYEE_SPLIT = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const QUOTE_SIGNING_SECRET = "test-quote-signing-secret-key-32bytes!!";
 
 async function createTestDb() {
   const dir = mkdtempSync(join(tmpdir(), "dear-sub-quote-"));
@@ -64,7 +66,7 @@ function mockCurveMinted(wei: bigint) {
 describe("POST /api/subscriptions/quote", () => {
   beforeEach(async () => {
     testDb = await createTestDb();
-    vi.stubEnv("QUOTE_SIGNING_SECRET", "test-quote-signing-secret-key");
+    vi.stubEnv("QUOTE_SIGNING_SECRET", QUOTE_SIGNING_SECRET);
     setFlag(true);
     setPaymentsLinkedWalletResolverForTests(async () => ({
       privyUserId: "did:privy:test-user",
@@ -173,6 +175,54 @@ describe("POST /api/subscriptions/quote", () => {
     expect(verifySubscriptionQuoteSignature(signFields, body.signature)).toBe(
       true,
     );
+  });
+
+  it("returns 503 when quote signing secret is not configured", async () => {
+    vi.stubEnv("QUOTE_SIGNING_SECRET", "too-short");
+    const writerId = randomUUID();
+    await testDb.insert(writers).values({
+      id: writerId,
+      payoutSplitAddress: PAYEE_SPLIT,
+    });
+    const response = await POST(
+      new Request("http://localhost/api/subscriptions/quote", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer test-token",
+        },
+        body: JSON.stringify({ plan: "monthly", writerId }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      code: "quote_signing_unavailable",
+    });
+  });
+
+  it("returns 503 when curve pricing is unavailable", async () => {
+    setMeTokenCurveReaderForTests({
+      readMeTokensMintedForDeposit: vi
+        .fn()
+        .mockRejectedValue(new MeTokenCurveUnavailableError()),
+    });
+    const writerId = randomUUID();
+    await testDb.insert(writers).values({
+      id: writerId,
+      payoutSplitAddress: PAYEE_SPLIT,
+    });
+    const response = await POST(
+      new Request("http://localhost/api/subscriptions/quote", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer test-token",
+        },
+        body: JSON.stringify({ plan: "monthly", writerId }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "curve_unavailable" });
   });
 
   it("rejects when curve output moved more than 20% within 10 minutes", async () => {

@@ -42,10 +42,7 @@ export function resetWriterSplitReaderForTests(): void {
 }
 
 function alchemyRpcUrl(): string {
-  const key =
-    process.env.ALCHEMY_API_KEY?.trim() ||
-    process.env.VITE_ALCHEMY_API_KEY?.trim() ||
-    "";
+  const key = process.env.ALCHEMY_API_KEY?.trim() ?? "";
   return key
     ? `https://base-mainnet.g.alchemy.com/v2/${key}`
     : "https://mainnet.base.org";
