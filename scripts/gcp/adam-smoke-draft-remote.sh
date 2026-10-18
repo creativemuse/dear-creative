@@ -3,8 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=/dev/null
-source "${ROOT}/scripts/gcp/adam-gcp.env"
+# shellcheck source=adam-gcp-lib.sh
+source "${ROOT}/scripts/gcp/adam-gcp-lib.sh"
+adam_gcp_parse_args "$@"
+adam_gcp_source_env "${ROOT}"
+adam_gcp_require_project
 
 cd "${ROOT}/services/adam"
 npm ci

@@ -3,12 +3,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=/dev/null
-source "${ROOT}/scripts/gcp/adam-gcp.env"
+# shellcheck source=adam-gcp-lib.sh
+source "${ROOT}/scripts/gcp/adam-gcp-lib.sh"
+adam_gcp_parse_args "$@"
+adam_gcp_source_env "${ROOT}"
+adam_gcp_require_project
 
-PROJECT="${GCP_PROJECT_ID:?}"
-REGION="${GCP_REGION:?}"
-SERVICE="${ADAM_CLOUD_RUN_SERVICE:?}"
+PROJECT="${GCP_PROJECT_ID}"
+REGION="${GCP_REGION}"
+SERVICE="${ADAM_CLOUD_RUN_SERVICE:?ADAM_CLOUD_RUN_SERVICE is required in adam-gcp.env}"
 SA_ID="${ADAM_RUNTIME_SA:?}"
 SA_EMAIL="${SA_ID}@${PROJECT}.iam.gserviceaccount.com"
 TOKEN_SECRET="${ADAM_SECRET_DEAR_APP_API_TOKEN:?}"
@@ -42,6 +45,8 @@ REV="$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format='
 
 cat <<EOF
 Deployed ${SERVICE}
+Project: ${PROJECT}
+Region: ${REGION}
 URL: ${URL}
 Revision: ${REV}
 Service account: ${SA_EMAIL}
