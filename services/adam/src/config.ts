@@ -1,7 +1,5 @@
 export function getDearCreativeApiBaseUrl(): string {
-  const raw =
-    process.env.DEAR_CREATIVE_API_BASE_URL?.trim() ||
-    process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  const raw = process.env.DEAR_CREATIVE_API_BASE_URL?.trim();
   if (!raw) {
     throw new Error("DEAR_CREATIVE_API_BASE_URL is not configured");
   }

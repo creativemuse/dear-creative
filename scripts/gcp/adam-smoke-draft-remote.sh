@@ -8,6 +8,7 @@ source "${ROOT}/scripts/gcp/adam-gcp.env"
 
 cd "${ROOT}/services/adam"
 npm ci --omit=dev
+npm run build:prod
 
 export RESEND_LIVE=false
 export PAYMENTS_ENABLED=false

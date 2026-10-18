@@ -16,9 +16,15 @@ BASE_URL_SECRET="${ADAM_SECRET_DEAR_APP_BASE_URL:?}"
 
 gcloud config set project "${PROJECT}" >/dev/null
 
+BUILD_SA_ARGS=()
+if [[ -n "${ADAM_CLOUD_BUILD_SA:-}" ]]; then
+  BUILD_SA_ARGS=(--build-service-account="${ADAM_CLOUD_BUILD_SA}@${PROJECT}.iam.gserviceaccount.com")
+fi
+
 gcloud run deploy "${SERVICE}" \
   --source "${ROOT}/services/adam" \
   --region "${REGION}" \
+  "${BUILD_SA_ARGS[@]}" \
   --service-account "${SA_EMAIL}" \
   --platform managed \
   --no-allow-unauthenticated \

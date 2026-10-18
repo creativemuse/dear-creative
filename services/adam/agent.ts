@@ -4,9 +4,15 @@ import {
   fetchActiveSponsors,
   publishDraftToQueue,
 } from "./src/dear-creative-client.js";
-import { assertSafeAdamRuntimeFlags } from "./src/config.js";
+import {
+  assertSafeAdamRuntimeFlags,
+  getAdamApiToken,
+  getDearCreativeApiBaseUrl,
+} from "./src/config.js";
 
 assertSafeAdamRuntimeFlags();
+getDearCreativeApiBaseUrl();
+getAdamApiToken();
 
 const publishDraftTool = new FunctionTool({
   name: "publish_draft_to_queue",

@@ -3,6 +3,8 @@
 # dependencies
 /node_modules
 /services/adam/node_modules
+/services/adam/dist
+.adam-docker-boot.log
 /scripts/gcp/adam-gcp.env
 /.pnp
 .pnp.*

@@ -28,3 +28,7 @@ jobs:
           npm ci
           npm test
           npm run build
+          npm run build:agent
+          npm run build:prod
+      - name: Adam prod image boot proof
+        run: ./scripts/gcp/adam-docker-boot-proof.sh
