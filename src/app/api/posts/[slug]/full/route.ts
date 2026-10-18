@@ -4,13 +4,14 @@ import { paymentsDisabledResponse } from "@/lib/payments/disabled-response";
 import { isPaymentsEnabled } from "@/lib/payments/feature-flag";
 import {
   buildX402PaymentRequirements,
+  getX402ChainId,
   verifyAgentPaymentHeader,
-  X402_BASE_SEPOLIA_CHAIN_ID,
 } from "@/lib/payments/x402-agent";
 import { loadFullPostContent } from "@/lib/paywall/full-post-content";
 import { buildPaywallResourceUrl } from "@/lib/paywall/resource-url";
 import {
   findPostIdBySlug,
+  findUnlockByTxHash,
   hasUnlockForWallet,
   recordX402Unlock,
 } from "@/lib/paywall/unlock-access";
@@ -66,16 +67,32 @@ export async function GET(request: Request, context: RouteContext) {
       const db = getDb();
       const postId = await findPostIdBySlug(db, slug);
       if (postId) {
-        const alreadyUnlocked = await hasUnlockForWallet(db, {
-          postId,
-          walletAddress: verification.walletAddress,
-        });
+        const existingTxUnlock = await findUnlockByTxHash(
+          db,
+          verification.txHash,
+        );
+        if (existingTxUnlock && existingTxUnlock.postId !== postId) {
+          return NextResponse.json(
+            {
+              error: "Payment verification failed",
+              reason: "tx_hash_already_used_for_another_post",
+            },
+            { status: 402 },
+          );
+        }
+
+        const alreadyUnlocked =
+          Boolean(existingTxUnlock && existingTxUnlock.postId === postId) ||
+          (await hasUnlockForWallet(db, {
+            postId,
+            walletAddress: verification.walletAddress,
+          }));
         if (!alreadyUnlocked) {
           await recordX402Unlock(db, {
             postId,
             walletAddress: verification.walletAddress,
             txHash: verification.txHash,
-            chainId: X402_BASE_SEPOLIA_CHAIN_ID,
+            chainId: verification.chainId ?? getX402ChainId(),
             amountRaw: verification.amountRaw,
           });
         }

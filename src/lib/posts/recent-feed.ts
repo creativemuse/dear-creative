@@ -12,6 +12,7 @@ export function getPublicSiteOrigin(): string {
 }
 
 export async function buildRecentPosts(limit = 6): Promise<RecentPost[]> {
+  const origin = getPublicSiteOrigin();
   const rows = await listRecentPublishedPosts(getDb(), limit);
   return rows.map((post) => ({
     slug: post.slug,
@@ -20,5 +21,6 @@ export async function buildRecentPosts(limit = 6): Promise<RecentPost[]> {
     excerpt: post.excerpt,
     coverImage: post.coverImage,
     canonicalUrl: resolvePostPublicUrl(post),
+    x402Url: `${origin}/api/posts/${encodeURIComponent(post.slug)}/full`,
   }));
 }

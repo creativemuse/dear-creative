@@ -44,5 +44,8 @@ describe("/api/posts/recent payload shape", () => {
     expect(posts[0]?.canonicalUrl).toBe(
       "https://paragraph.xyz/p/creative-tv-post",
     );
+    expect(posts[0]?.x402Url).toBe(
+      "https://news.creativeplatform.xyz/api/posts/creative-tv-post/full",
+    );
   });
 });

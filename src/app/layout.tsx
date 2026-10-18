@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { BotIdProtect } from "@/components/botid-protect";
 import { AppProviders } from "@/components/providers/app-providers";
 import { SiteFooter } from "@/components/site-footer";
+import { SiteHeader } from "@/components/site-header";
 import { getPrivyAppId } from "@/lib/privy/config";
 import "./globals.css";
 
@@ -38,6 +39,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
         <AppProviders privyAppId={privyAppId}>
+          <SiteHeader />
           <div className="flex-1">{children}</div>
         </AppProviders>
         <SiteFooter />

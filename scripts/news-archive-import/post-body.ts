@@ -6,5 +6,7 @@ export function extractPostBodyHtmlFromPage(html: string): string | null {
   if (!match?.[1]) {
     return null;
   }
-  return match[1].trim();
+  return match[1]
+    .replace(/",?\s*postPreview:\s*(?=<\/p>|$)/gi, "")
+    .trim();
 }

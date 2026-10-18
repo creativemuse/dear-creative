@@ -91,6 +91,7 @@ export function renderMarkdownToSafeHtml(markdown: string): string {
 
     // Horizontal rule
     if (/^(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line.trim())) {
+      blocks.push("<hr />");
       i++;
       continue;
     }
@@ -167,15 +168,31 @@ export function renderMarkdownToSafeHtml(markdown: string): string {
 }
 
 /**
+ * Cleans known Paragraph/Astro serialization artifacts from imported archive HTML,
+ * such as trailing `",postPreview:` fragments.
+ */
+export function cleanArchiveBodyArtifacts(raw: string): string {
+  return raw
+    .replace(/",?\s*postPreview:\s*(?=<\/p>|$)/gi, "")
+    .replace(/<p>\s*(#{1,4})\s+([^<]+)<\/p>/g, (_m, hashes: string, text: string) => {
+      const level = hashes.length;
+      const tag = level <= 2 ? "h2" : level === 3 ? "h3" : "h4";
+      return `<${tag}>${text.trim()}</${tag}>`;
+    });
+}
+
+/**
  * Accepts either HTML or Markdown (or mixed content) and returns sanitized HTML.
  */
 export function ensureArticleHtml(input: string | null | undefined): string {
-  const trimmed = input?.trim() ?? "";
+  const trimmed = cleanArchiveBodyArtifacts(input?.trim() ?? "").trim();
   if (!trimmed) {
     return "";
   }
   const looksLikeHtml =
-    /<(?:p|h[2-4]|ul|ol|li|blockquote|pre|div)\b[^>]*>/i.test(trimmed);
+    /<(?:p|h[1-6]|ul|ol|li|blockquote|pre|div|table|figure|hr)\b[^>]*>/i.test(
+      trimmed,
+    );
   if (looksLikeHtml) {
     return sanitizeArticleHtml(trimmed);
   }

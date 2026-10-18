@@ -1,11 +1,11 @@
-import { sanitizeArticleHtml } from "@/lib/html/sanitize-article-html";
+import { ensureArticleHtml } from "@/lib/html/markdown-to-html";
 
-/** Sanitize stored `posts.body_html` before any HTML render path. */
+/** Sanitize and normalize stored `posts.body_html` before any HTML render path. */
 export function preparePostBodyHtmlForRender(
   raw: string | null | undefined,
 ): string {
   if (!raw?.trim()) {
     return "";
   }
-  return sanitizeArticleHtml(raw);
+  return ensureArticleHtml(raw);
 }

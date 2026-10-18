@@ -19,11 +19,17 @@ import type {
 import type { AdamIdeaRecord } from "@/lib/adam/ideas";
 import type { AdamScheduleRecord } from "@/lib/adam/schedule";
 import type { ApprovalQueueItem } from "@/lib/approval/list-queue";
-import { renderMarkdownToSafeHtml } from "@/lib/html/markdown-to-html";
+import { htmlToMarkdown } from "@/lib/html/html-to-markdown";
+import {
+  ensureArticleHtml,
+  renderMarkdownToSafeHtml,
+} from "@/lib/html/markdown-to-html";
+import type { AdminPostRecord } from "@/lib/posts/manage-posts";
 
-type StudioTab = "chat" | "ideas" | "approvals" | "schedule";
+export type StudioTab = "chat" | "ideas" | "posts" | "approvals" | "schedule";
 type VoiceEngineMode = "google" | "browser";
 type IdeaEditorMode = "write" | "preview";
+type PostEditorMode = "markdown" | "html" | "preview";
 
 type ClientAttachment = StudioAttachmentInput & {
   id: string;
@@ -117,7 +123,26 @@ const SCHEDULE_PRESETS = [
 
 export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) {
   const { ready, authenticated, login, logout, getAccessToken } = usePrivy();
-  const [activeTab, setActiveTab] = useState<StudioTab>(initialTab);
+  const [activeTab, setActiveTab] = useState<StudioTab>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      const slugParam = params.get("slug")?.trim();
+      if (
+        tabParam === "chat" ||
+        tabParam === "ideas" ||
+        tabParam === "posts" ||
+        tabParam === "approvals" ||
+        tabParam === "schedule"
+      ) {
+        return tabParam;
+      }
+      if (slugParam) {
+        return "posts";
+      }
+    }
+    return initialTab;
+  });
   const [adminStatus, setAdminStatus] = useState<{
     checked: boolean;
     isAdmin: boolean;
@@ -170,6 +195,34 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
   const [actingOnPostId, setActingOnPostId] = useState<string | null>(null);
 
+  // Published & Draft Posts Editor state
+  const [adminPosts, setAdminPosts] = useState<AdminPostRecord[]>([]);
+  const [postSearchQuery, setPostSearchQuery] = useState("");
+  const [postStatusFilter, setPostStatusFilter] = useState<
+    "all" | "published" | "draft"
+  >("all");
+  const [selectedEditPostId, setSelectedEditPostId] = useState<string | null>(
+    null,
+  );
+  const selectedEditPostIdRef = useRef<string | null>(null);
+  const requestedSlugRef = useRef<string | null>(
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("slug")?.trim() || null
+      : null,
+  );
+  const [editPostTitle, setEditPostTitle] = useState("");
+  const [editPostSlug, setEditPostSlug] = useState("");
+  const [editPostStatus, setEditPostStatus] = useState<"published" | "draft">(
+    "published",
+  );
+  const [editPostTeaser, setEditPostTeaser] = useState("");
+  const [editPostEmailSubject, setEditPostEmailSubject] = useState("");
+  const [editPostMarkdown, setEditPostMarkdown] = useState("");
+  const [editPostHtml, setEditPostHtml] = useState("");
+  const [editPostMode, setEditPostMode] = useState<PostEditorMode>("markdown");
+  const [isSavingPost, setIsSavingPost] = useState(false);
+  const [isPolishingPost, setIsPolishingPost] = useState(false);
+
   // Schedule state
   const [schedule, setSchedule] = useState<AdamScheduleRecord | null>(null);
   const [scheduleEnabled, setScheduleEnabled] = useState(true);
@@ -181,6 +234,20 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
   const chatFileInputId = useId();
   const ideaFileInputId = useId();
+
+  const selectPostForEditing = useCallback((post: AdminPostRecord) => {
+    selectedEditPostIdRef.current = post.id;
+    setSelectedEditPostId(post.id);
+    setEditPostTitle(post.title);
+    setEditPostSlug(post.slug);
+    setEditPostStatus(post.status);
+    setEditPostTeaser(post.teaserText ?? "");
+    setEditPostEmailSubject(post.emailSubject ?? post.title);
+    setEditPostMarkdown(
+      post.markdown || htmlToMarkdown(post.bodyHtml ?? post.emailHtml ?? ""),
+    );
+    setEditPostHtml(post.bodyHtml ?? post.emailHtml ?? "");
+  }, []);
 
   const authFetch = useCallback(
     async (url: string, init: RequestInit = {}) => {
@@ -196,12 +263,14 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
   const loadStudioData = useCallback(async () => {
     try {
-      const [meRes, ideasRes, approvalsRes, scheduleRes] = await Promise.all([
-        authFetch("/api/admin/me"),
-        authFetch("/api/adam/ideas"),
-        authFetch("/api/approvals"),
-        authFetch("/api/adam/schedule"),
-      ]);
+      const [meRes, ideasRes, approvalsRes, scheduleRes, postsRes] =
+        await Promise.all([
+          authFetch("/api/admin/me"),
+          authFetch("/api/adam/ideas"),
+          authFetch("/api/approvals"),
+          authFetch("/api/adam/schedule"),
+          authFetch("/api/adam/posts"),
+        ]);
 
       if (meRes.ok) {
         const me = (await meRes.json()) as { userId: string; isAdmin: boolean };
@@ -238,10 +307,30 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           setScheduleInstructions(data.schedule.instructions ?? "");
         }
       }
+
+      if (postsRes.ok) {
+        const data = (await postsRes.json()) as { posts: AdminPostRecord[] };
+        const loadedPosts = data.posts ?? [];
+        setAdminPosts(loadedPosts);
+        if (loadedPosts.length > 0) {
+          const targetSlug = requestedSlugRef.current;
+          if (targetSlug) {
+            const match = loadedPosts.find(
+              (p) => p.slug === targetSlug || p.id === targetSlug,
+            );
+            if (match) {
+              selectPostForEditing(match);
+              requestedSlugRef.current = null;
+            }
+          } else if (!selectedEditPostIdRef.current) {
+            selectPostForEditing(loadedPosts[0]!);
+          }
+        }
+      }
     } catch {
       setAdminStatus((prev) => ({ ...prev, checked: true }));
     }
-  }, [authFetch]);
+  }, [authFetch, selectPostForEditing]);
 
   useEffect(() => {
     if (!ready || !authenticated) return;
@@ -871,6 +960,174 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     }
   }, [authFetch, loadStudioData]);
 
+  // --- Save Edited Post (Published or Draft) ---
+  const handleSaveEditedPost = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      if (!selectedEditPostId) {
+        setStatusBanner({
+          kind: "error",
+          text: "Select a post from the list to edit first.",
+        });
+        return;
+      }
+      if (!editPostTitle.trim() || !editPostSlug.trim()) {
+        setStatusBanner({
+          kind: "error",
+          text: "Title and slug are required.",
+        });
+        return;
+      }
+
+      setIsSavingPost(true);
+      setStatusBanner(null);
+
+      try {
+        const payload =
+          editPostMode === "html"
+            ? {
+                title: editPostTitle.trim(),
+                slug: editPostSlug.trim(),
+                status: editPostStatus,
+                teaserText: editPostTeaser.trim() || null,
+                emailSubject: editPostEmailSubject.trim() || null,
+                bodyHtml: editPostHtml,
+                syncEmailWithBody: true,
+              }
+            : {
+                title: editPostTitle.trim(),
+                slug: editPostSlug.trim(),
+                status: editPostStatus,
+                teaserText: editPostTeaser.trim() || null,
+                emailSubject: editPostEmailSubject.trim() || null,
+                markdown: editPostMarkdown,
+                syncEmailWithBody: true,
+              };
+
+        const res = await authFetch(`/api/adam/posts/${selectedEditPostId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = (await res.json()) as {
+          post?: AdminPostRecord;
+          error?: string;
+        };
+
+        if (!res.ok || !data.post) {
+          setStatusBanner({
+            kind: "error",
+            text: data.error || "Failed to save post updates.",
+          });
+          return;
+        }
+
+        selectPostForEditing(data.post);
+        await loadStudioData();
+        setStatusBanner({
+          kind: "success",
+          text: `Saved changes to "${data.post.title}" (/posts/${data.post.slug})!`,
+        });
+      } catch {
+        setStatusBanner({
+          kind: "error",
+          text: "Network error while saving post.",
+        });
+      } finally {
+        setIsSavingPost(false);
+      }
+    },
+    [
+      authFetch,
+      editPostEmailSubject,
+      editPostHtml,
+      editPostMarkdown,
+      editPostMode,
+      editPostSlug,
+      editPostStatus,
+      editPostTeaser,
+      editPostTitle,
+      loadStudioData,
+      selectPostForEditing,
+      selectedEditPostId,
+    ],
+  );
+
+  // --- Ask Adam to Fix Missing Headers & Formatting on Selected Post ---
+  const handleAskAdamToFixFormatting = useCallback(async () => {
+    const sourceContent =
+      editPostMode === "html"
+        ? htmlToMarkdown(editPostHtml)
+        : editPostMarkdown;
+
+    if (!sourceContent.trim()) {
+      setStatusBanner({
+        kind: "error",
+        text: "Post body is empty — nothing to format.",
+      });
+      return;
+    }
+
+    setIsPolishingPost(true);
+    setStatusBanner(null);
+
+    try {
+      const prompt = [
+        `Please clean up and restore missing section headers (## and ###) and Markdown formatting for this existing Dear Creative post titled "${editPostTitle}".`,
+        `Rules:`,
+        `- Keep the author's original wording, links, images, and arguments intact.`,
+        `- Ensure clear ## and ### section headings where sections transition.`,
+        `- Remove any leftover scraping artifacts (like ",postPreview:" or duplicate link card text).`,
+        `- Return ONLY the cleaned Markdown body without wrapping it in a code fence and do NOT create a new draft in the queue.`,
+        ``,
+        sourceContent,
+      ].join("\n");
+
+      const res = await authFetch("/api/adam/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: prompt }],
+          createDraftIfProposed: false,
+        }),
+      });
+
+      const data = (await res.json()) as {
+        reply?: string;
+        error?: string;
+      };
+
+      if (!res.ok || !data.reply) {
+        setStatusBanner({
+          kind: "error",
+          text: data.error || "Adam could not format this post right now.",
+        });
+        return;
+      }
+
+      const cleanedReply = data.reply
+        .replace(/^```(?:markdown|md)?\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
+
+      setEditPostMarkdown(cleanedReply);
+      setEditPostHtml(ensureArticleHtml(cleanedReply));
+      setEditPostMode("markdown");
+      setStatusBanner({
+        kind: "success",
+        text: "Adam restored section headers and cleaned up formatting! Review in Markdown or Preview mode, then click Save.",
+      });
+    } catch {
+      setStatusBanner({
+        kind: "error",
+        text: "Network error while asking Adam to format post.",
+      });
+    } finally {
+      setIsPolishingPost(false);
+    }
+  }, [authFetch, editPostHtml, editPostMarkdown, editPostMode, editPostTitle]);
+
   if (!ready) {
     return (
       <div className="mx-auto max-w-5xl px-6 py-16">
@@ -900,7 +1157,8 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           </h1>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             Multimodal chat, file &amp; image analysis, Google/local voice (STT
-            &amp; TTS), ideas-to-drafts pipeline, and Monday morning schedule.
+            &amp; TTS), ideas-to-drafts pipeline, published post editor, and
+            Monday morning schedule.
           </p>
         </div>
 
@@ -995,6 +1253,24 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           {queuedIdeasCount > 0 ? (
             <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
               {queuedIdeasCount} queued
+            </span>
+          ) : null}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("posts")}
+          aria-current={activeTab === "posts" ? "page" : undefined}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
+            activeTab === "posts"
+              ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+              : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+          }`}
+        >
+          <span>Edit Posts</span>
+          {adminPosts.length > 0 ? (
+            <span className="rounded-full bg-zinc-500/20 px-2 py-0.5 text-xs font-semibold">
+              {adminPosts.length}
             </span>
           ) : null}
         </button>
@@ -1646,6 +1922,469 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
         </section>
       ) : null}
 
+      {/* TAB 2.5: EDIT PUBLISHED & DRAFT POSTS */}
+      {activeTab === "posts" ? (
+        <section className="mt-6 grid gap-6 lg:grid-cols-3">
+          {/* Left Column: Post Browser */}
+          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-base font-semibold">Posts &amp; Archive</h2>
+              <span className="text-xs text-zinc-500">
+                {adminPosts.length} total
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+              Select any published post or draft to fix missing headers, clean
+              formatting, or update its title and body.
+            </p>
+
+            <div className="mt-3 space-y-2">
+              <input
+                type="search"
+                value={postSearchQuery}
+                onChange={(e) => setPostSearchQuery(e.target.value)}
+                placeholder="Search by title or slug…"
+                aria-label="Search posts by title or slug"
+                className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+              />
+              <div className="flex gap-1">
+                {(["all", "published", "draft"] as const).map((statusOpt) => (
+                  <button
+                    key={statusOpt}
+                    type="button"
+                    onClick={() => setPostStatusFilter(statusOpt)}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium capitalize ${
+                      postStatusFilter === statusOpt
+                        ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
+                    }`}
+                  >
+                    {statusOpt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {adminPosts.length === 0 ? (
+              <p className="mt-6 text-xs text-zinc-500">
+                {authenticated
+                  ? "No posts loaded yet."
+                  : "Sign in with Privy to load and edit posts."}
+              </p>
+            ) : (
+              <ul className="mt-4 max-h-[600px] space-y-2 overflow-y-auto pr-1">
+                {adminPosts
+                  .filter((p) => {
+                    if (
+                      postStatusFilter !== "all" &&
+                      p.status !== postStatusFilter
+                    ) {
+                      return false;
+                    }
+                    const q = postSearchQuery.trim().toLowerCase();
+                    if (!q) return true;
+                    return (
+                      p.title.toLowerCase().includes(q) ||
+                      p.slug.toLowerCase().includes(q)
+                    );
+                  })
+                  .map((post) => {
+                    const isSelected = selectedEditPostId === post.id;
+                    return (
+                      <li key={post.id}>
+                        <button
+                          type="button"
+                          onClick={() => selectPostForEditing(post)}
+                          className={`w-full rounded-xl border p-3 text-left transition ${
+                            isSelected
+                              ? "border-zinc-900 bg-zinc-100/90 dark:border-zinc-100 dark:bg-zinc-800/80"
+                              : "border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                                post.status === "published"
+                                  ? "bg-emerald-500/20 text-emerald-800 dark:text-emerald-300"
+                                  : "bg-amber-500/20 text-amber-800 dark:text-amber-300"
+                              }`}
+                            >
+                              {post.status}
+                            </span>
+                            <span className="text-[11px] text-zinc-400">
+                              {post.publishedAt
+                                ? new Date(
+                                    post.publishedAt,
+                                  ).toLocaleDateString()
+                                : "Draft"}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 line-clamp-2 text-xs font-semibold">
+                            {post.title}
+                          </p>
+                          <code className="mt-1 block truncate text-[11px] text-zinc-500">
+                            /posts/{post.slug}
+                          </code>
+                        </button>
+                      </li>
+                    );
+                  })}
+              </ul>
+            )}
+          </div>
+
+          {/* Right Column: Post Editor */}
+          <form
+            onSubmit={(e) => void handleSaveEditedPost(e)}
+            className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-xs lg:col-span-2 dark:border-zinc-800 dark:bg-zinc-900/60"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 pb-4 dark:border-zinc-800">
+              <div>
+                <h2 className="text-lg font-semibold">
+                  {selectedEditPostId ? "Edit Post" : "Select a Post to Edit"}
+                </h2>
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  Edit in Markdown or HTML, restore missing section headers
+                  (H2/H3), preview live, and save directly to Dear Creative.
+                </p>
+              </div>
+              {editPostSlug ? (
+                <Link
+                  href={`/posts/${editPostSlug}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-zinc-300 px-3.5 py-1.5 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                >
+                  View Post Page ↗
+                </Link>
+              ) : null}
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="sm:col-span-2">
+                  <label
+                    htmlFor="edit-post-title"
+                    className="block text-xs font-medium"
+                  >
+                    Post Title
+                  </label>
+                  <input
+                    id="edit-post-title"
+                    type="text"
+                    required
+                    value={editPostTitle}
+                    onChange={(e) => setEditPostTitle(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="edit-post-status"
+                    className="block text-xs font-medium"
+                  >
+                    Status
+                  </label>
+                  <select
+                    id="edit-post-status"
+                    value={editPostStatus}
+                    onChange={(e) =>
+                      setEditPostStatus(
+                        e.target.value === "draft" ? "draft" : "published",
+                      )
+                    }
+                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                  >
+                    <option value="published">Published</option>
+                    <option value="draft">Draft</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="edit-post-slug"
+                    className="block text-xs font-medium"
+                  >
+                    URL Slug
+                  </label>
+                  <input
+                    id="edit-post-slug"
+                    type="text"
+                    required
+                    value={editPostSlug}
+                    onChange={(e) => setEditPostSlug(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="edit-post-subject"
+                    className="block text-xs font-medium"
+                  >
+                    Email Subject
+                  </label>
+                  <input
+                    id="edit-post-subject"
+                    type="text"
+                    value={editPostEmailSubject}
+                    onChange={(e) => setEditPostEmailSubject(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="edit-post-teaser"
+                  className="block text-xs font-medium"
+                >
+                  Subtitle / Teaser Excerpt
+                </label>
+                <input
+                  id="edit-post-teaser"
+                  type="text"
+                  value={editPostTeaser}
+                  onChange={(e) => setEditPostTeaser(e.target.value)}
+                  placeholder="Short subtitle shown under the title and on the posts index…"
+                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                />
+              </div>
+
+              {/* Editor Mode & Formatting Toolbar */}
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 text-xs dark:border-zinc-800 dark:bg-zinc-950">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (editPostMode === "html") {
+                          setEditPostMarkdown(htmlToMarkdown(editPostHtml));
+                        }
+                        setEditPostMode("markdown");
+                      }}
+                      className={`rounded-md px-3 py-1 font-medium ${
+                        editPostMode === "markdown"
+                          ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
+                          : "text-zinc-600 dark:text-zinc-400"
+                      }`}
+                    >
+                      Markdown Editor
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (editPostMode !== "html") {
+                          setEditPostHtml(ensureArticleHtml(editPostMarkdown));
+                        }
+                        setEditPostMode("html");
+                      }}
+                      className={`rounded-md px-3 py-1 font-medium ${
+                        editPostMode === "html"
+                          ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
+                          : "text-zinc-600 dark:text-zinc-400"
+                      }`}
+                    >
+                      HTML Source
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditPostMode("preview")}
+                      className={`rounded-md px-3 py-1 font-medium ${
+                        editPostMode === "preview"
+                          ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
+                          : "text-zinc-600 dark:text-zinc-400"
+                      }`}
+                    >
+                      Live Preview
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isPolishingPost || !selectedEditPostId}
+                    onClick={() => void handleAskAdamToFixFormatting()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                  >
+                    {isPolishingPost
+                      ? "Adam is fixing headers & formatting…"
+                      : "✨ Ask Adam to Restore Headers & Formatting"}
+                  </button>
+                </div>
+
+                {editPostMode === "markdown" ? (
+                  <>
+                    <div className="mt-2 flex flex-wrap gap-1.5 rounded-t-xl border border-b-0 border-zinc-300 bg-zinc-100 px-2.5 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}## Section Heading\n\n`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert H2 Header"
+                      >
+                        H2
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}### Subheading\n\n`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert H3 Header"
+                      >
+                        H3
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown((prev) => `${prev} **bold**`)
+                        }
+                        className="rounded px-2 py-0.5 font-bold hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Bold"
+                      >
+                        B
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown((prev) => `${prev} *italic*`)
+                        }
+                        className="rounded px-2 py-0.5 italic hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Italic"
+                      >
+                        I
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}> Key quote or takeaway\n\n`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Blockquote"
+                      >
+                        ❝ Quote
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}- List item\n`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Bullet List"
+                      >
+                        • List
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev} [Link text](https://creativeplatform.xyz)`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Link"
+                      >
+                        🔗 Link
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}---\n\n`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Divider"
+                      >
+                        ― Divider
+                      </button>
+                    </div>
+                    <textarea
+                      id="edit-post-markdown"
+                      aria-label="Post Markdown Content"
+                      rows={16}
+                      value={editPostMarkdown}
+                      onChange={(e) => {
+                        setEditPostMarkdown(e.target.value);
+                        setEditPostHtml(ensureArticleHtml(e.target.value));
+                      }}
+                      placeholder="Write or edit post content using Markdown (## Heading, ### Subheading, **bold**, - list, [Link](https://...))…"
+                      className="w-full rounded-b-xl border border-zinc-300 bg-zinc-50 p-3.5 font-mono text-xs leading-relaxed dark:border-zinc-700 dark:bg-zinc-950"
+                    />
+                  </>
+                ) : editPostMode === "html" ? (
+                  <textarea
+                    id="edit-post-html"
+                    aria-label="Post HTML Source"
+                    rows={16}
+                    value={editPostHtml}
+                    onChange={(e) => setEditPostHtml(e.target.value)}
+                    placeholder="<p>Dear Creative,</p><h2>Section Heading</h2>..."
+                    className="mt-2 w-full rounded-xl border border-zinc-300 bg-zinc-50 p-3.5 font-mono text-xs leading-relaxed dark:border-zinc-700 dark:bg-zinc-950"
+                  />
+                ) : (
+                  <div className="mt-2 rounded-xl border border-zinc-200 bg-zinc-50 p-6 dark:border-zinc-800 dark:bg-zinc-950">
+                    <header className="mb-6 border-b border-zinc-200 pb-4 dark:border-zinc-800">
+                      <h3 className="text-2xl font-semibold tracking-tight">
+                        {editPostTitle || "Untitled Post"}
+                      </h3>
+                      {editPostTeaser ? (
+                        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                          {editPostTeaser}
+                        </p>
+                      ) : null}
+                    </header>
+                    <div
+                      className="prose prose-zinc dark:prose-invert max-w-none"
+                      dangerouslySetInnerHTML={{
+                        __html:
+                          ensureArticleHtml(
+                            editPostMode === "preview"
+                              ? editPostMarkdown || editPostHtml
+                              : editPostHtml,
+                          ) || "<p><em>No content yet.</em></p>",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={isSavingPost || !selectedEditPostId}
+                  className="rounded-xl bg-zinc-900 px-5 py-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                >
+                  {isSavingPost ? "Saving Changes…" : "Save & Update Post"}
+                </button>
+                {editPostSlug ? (
+                  <span className="text-xs text-zinc-500">
+                    Saving immediately revalidates{" "}
+                    <code>/posts/{editPostSlug}</code> and <code>/posts</code>.
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          </form>
+        </section>
+      ) : null}
+
       {/* TAB 3: APPROVAL QUEUE */}
       {activeTab === "approvals" ? (
         <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
@@ -1707,6 +2446,23 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const match = adminPosts.find(
+                              (p) => p.id === item.postId || p.slug === item.slug,
+                            );
+                            if (match) {
+                              selectPostForEditing(match);
+                            } else {
+                              requestedSlugRef.current = item.slug;
+                            }
+                            setActiveTab("posts");
+                          }}
+                          className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                        >
+                          ✎ Edit
+                        </button>
                         <button
                           type="button"
                           onClick={() =>
