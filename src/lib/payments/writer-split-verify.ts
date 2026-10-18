@@ -1,8 +1,19 @@
-import { createPublicClient, http, parseAbi, type Address } from "viem";
+import {
+  createPublicClient,
+  encodeAbiParameters,
+  http,
+  keccak256,
+  parseAbi,
+  type Address,
+} from "viem";
 import { base } from "viem/chains";
 import { METOKEN_CURVE_RPC_TIMEOUT_MS } from "./metoken-curve-config";
 
-/** 0xSplits v2 percent scale: 1_000_000 = 100%. */
+/**
+ * Splits v2 PullSplit stores only `splitHash` on-chain (not full recipient lists).
+ * @see https://github.com/0xSplits/splits-contracts-monorepo/blob/main/packages/splits-v2/docs/contracts.md
+ * @see https://github.com/0xSplits/splits-contracts-monorepo/blob/main/packages/splits-v2/src/libraries/SplitV2.sol
+ */
 export const SPLITS_V2_PERCENT_SCALE = 1_000_000;
 
 const WRITER_ALLOCATION = 900_000;
@@ -11,15 +22,20 @@ const PLATFORM_ALLOCATION = 100_000;
 const ZERO_ADDRESS =
   "0x0000000000000000000000000000000000000000" as Address;
 
-const PULL_SPLIT_ABI = parseAbi([
-  "function getRecipients() view returns (address[] recipients, uint256[] allocations)",
-  "function controller() view returns (address)",
+const PULL_SPLIT_WALLET_ABI = parseAbi([
+  "function splitHash() view returns (bytes32)",
+  "function owner() view returns (address)",
 ]);
 
-export type WriterSplitSnapshot = {
-  recipients: Address[];
-  allocations: bigint[];
-  controller: Address;
+export type DearWriterSplitParams = {
+  writerRecipient: Address;
+  treasuryAddress: Address;
+  distributionIncentive?: number;
+};
+
+export type PullSplitOnChainState = {
+  splitHash: `0x${string}`;
+  owner: Address;
 };
 
 export type WriterSplitVerification = {
@@ -33,20 +49,61 @@ export type WriterSplitVerificationError = {
   reason: string;
 };
 
-export type WriterSplitReader = {
-  readWriterSplit(splitAddress: Address): Promise<WriterSplitSnapshot>;
+export type PullSplitReader = {
+  readPullSplitWallet(splitAddress: Address): Promise<PullSplitOnChainState>;
 };
 
-let splitReaderOverride: WriterSplitReader | null | undefined;
+let pullSplitReaderOverride: PullSplitReader | null | undefined;
 
-export function setWriterSplitReaderForTests(
-  reader: WriterSplitReader | null,
+export function setPullSplitReaderForTests(
+  reader: PullSplitReader | null,
 ): void {
-  splitReaderOverride = reader;
+  pullSplitReaderOverride = reader;
 }
 
+export function resetPullSplitReaderForTests(): void {
+  pullSplitReaderOverride = undefined;
+}
+
+/** @deprecated Use setPullSplitReaderForTests */
+export function setWriterSplitReaderForTests(
+  reader: {
+    readWriterSplit: (
+      splitAddress: Address,
+    ) => Promise<{
+      controller?: Address;
+      owner?: Address;
+      splitHash?: `0x${string}`;
+      recipients: Address[];
+      allocations: bigint[];
+    }>;
+  } | null,
+): void {
+  if (!reader) {
+    pullSplitReaderOverride = null;
+    return;
+  }
+  pullSplitReaderOverride = {
+    readPullSplitWallet: async (splitAddress) => {
+      const snapshot = await reader.readWriterSplit(splitAddress);
+      return {
+        splitHash:
+          snapshot.splitHash ??
+          computeSplitV2Hash(
+            buildSortedDearSplit({
+              writerRecipient: snapshot.recipients[0]!,
+              treasuryAddress: snapshot.recipients[1]!,
+            }),
+          ),
+        owner: snapshot.owner ?? snapshot.controller ?? ZERO_ADDRESS,
+      };
+    },
+  };
+}
+
+/** @deprecated Use resetPullSplitReaderForTests */
 export function resetWriterSplitReaderForTests(): void {
-  splitReaderOverride = undefined;
+  resetPullSplitReaderForTests();
 }
 
 function alchemyRpcUrl(): string {
@@ -56,97 +113,144 @@ function alchemyRpcUrl(): string {
     : "https://mainnet.base.org";
 }
 
-async function readWriterSplitLive(
+async function readPullSplitWalletLive(
   splitAddress: Address,
-): Promise<WriterSplitSnapshot> {
+): Promise<PullSplitOnChainState> {
   const client = createPublicClient({
     chain: base,
     transport: http(alchemyRpcUrl(), {
       timeout: METOKEN_CURVE_RPC_TIMEOUT_MS,
     }),
   });
-  const [recipients, allocations] = await client.readContract({
-    address: splitAddress,
-    abi: PULL_SPLIT_ABI,
-    functionName: "getRecipients",
-  });
-  const controller = await client.readContract({
-    address: splitAddress,
-    abi: PULL_SPLIT_ABI,
-    functionName: "controller",
-  });
+  const [splitHash, owner] = await Promise.all([
+    client.readContract({
+      address: splitAddress,
+      abi: PULL_SPLIT_WALLET_ABI,
+      functionName: "splitHash",
+    }),
+    client.readContract({
+      address: splitAddress,
+      abi: PULL_SPLIT_WALLET_ABI,
+      functionName: "owner",
+    }),
+  ]);
+  return { splitHash, owner };
+}
+
+export async function readPullSplitWallet(
+  splitAddress: Address,
+): Promise<PullSplitOnChainState> {
+  if (pullSplitReaderOverride !== undefined && pullSplitReaderOverride !== null) {
+    return pullSplitReaderOverride.readPullSplitWallet(splitAddress);
+  }
+  return readPullSplitWalletLive(splitAddress);
+}
+
+export type SplitV2Struct = {
+  recipients: Address[];
+  allocations: readonly bigint[];
+  totalAllocation: bigint;
+  distributionIncentive: number;
+};
+
+/** Matches `SplitV2Lib.getHashMem` — `keccak256(abi.encode(split))`. */
+export function computeSplitV2Hash(split: SplitV2Struct): `0x${string}` {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            { type: "address[]", name: "recipients" },
+            { type: "uint256[]", name: "allocations" },
+            { type: "uint256", name: "totalAllocation" },
+            { type: "uint16", name: "distributionIncentive" },
+          ],
+        },
+      ],
+      [
+        {
+          recipients: split.recipients,
+          allocations: [...split.allocations],
+          totalAllocation: split.totalAllocation,
+          distributionIncentive: split.distributionIncentive,
+        },
+      ],
+    ),
+  );
+}
+
+export function buildSortedDearSplit(
+  params: DearWriterSplitParams,
+): SplitV2Struct {
+  const writer = params.writerRecipient.toLowerCase() as Address;
+  const treasury = params.treasuryAddress.toLowerCase() as Address;
+  const recipients =
+    writer < treasury ? [writer, treasury] : [treasury, writer];
+  const allocations =
+    recipients[0] === writer
+      ? [BigInt(WRITER_ALLOCATION), BigInt(PLATFORM_ALLOCATION)]
+      : [BigInt(PLATFORM_ALLOCATION), BigInt(WRITER_ALLOCATION)];
   return {
-    recipients: [...recipients],
-    allocations: [...allocations],
-    controller,
+    recipients,
+    allocations,
+    totalAllocation: BigInt(SPLITS_V2_PERCENT_SCALE),
+    distributionIncentive: params.distributionIncentive ?? 0,
   };
 }
 
-export async function readWriterSplit(
-  splitAddress: Address,
-): Promise<WriterSplitSnapshot> {
-  if (splitReaderOverride !== undefined && splitReaderOverride !== null) {
-    return splitReaderOverride.readWriterSplit(splitAddress);
-  }
-  return readWriterSplitLive(splitAddress);
-}
-
 /**
- * Validates a Splits v2 pull split for Dear Creative paid signup.
- *
- * G2 policy: writer splits must be **immutable** (controller `0x0`). Recipient
- * or allocation changes require deploying a **new** split contract; update
- * `writers.payout_split_address` to point at the new address.
+ * Validates a deployed Splits v2 PullSplit on Base for Dear Creative (90/10, immutable).
+ * Wallet changes require deploying a new split; update `writers.payout_split_address`.
  */
 export async function verifyWriterSplit(
   splitAddress: Address,
+  params: DearWriterSplitParams,
 ): Promise<WriterSplitVerification | WriterSplitVerificationError> {
-  let snapshot: WriterSplitSnapshot;
+  let onChain: PullSplitOnChainState;
   try {
-    snapshot = await readWriterSplit(splitAddress);
+    onChain = await readPullSplitWallet(splitAddress);
   } catch {
-    return { ok: false, reason: "Could not read split recipients on Base" };
+    return { ok: false, reason: "Could not read split configuration on Base" };
   }
 
-  if (snapshot.controller.toLowerCase() !== ZERO_ADDRESS) {
+  if (onChain.owner.toLowerCase() !== ZERO_ADDRESS) {
     return {
       ok: false,
       reason:
-        "Split must be immutable (controller must be zero); deploy a new split to change payout wallets",
+        "Split must be immutable (owner must be zero); deploy a new split to change payout wallets",
     };
   }
 
-  const { recipients, allocations } = snapshot;
-
-  if (recipients.length !== 2 || allocations.length !== 2) {
+  const expectedSplit = buildSortedDearSplit(params);
+  const expectedHash = computeSplitV2Hash(expectedSplit);
+  if (onChain.splitHash.toLowerCase() !== expectedHash.toLowerCase()) {
     return {
       ok: false,
-      reason: "Split must have exactly two recipients (writer and treasury)",
+      reason: "Split configuration does not match the expected 90/10 Dear Creative layout",
     };
   }
 
-  const sortedAllocations = [...allocations].sort((a, b) =>
-    a < b ? -1 : a > b ? 1 : 0,
+  const treasury = params.treasuryAddress.toLowerCase();
+  const treasuryIndex = expectedSplit.recipients.findIndex(
+    (r) => r.toLowerCase() === treasury,
   );
-  const expected = [
-    BigInt(PLATFORM_ALLOCATION),
-    BigInt(WRITER_ALLOCATION),
-  ].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-
-  if (
-    sortedAllocations[0] !== expected[0] ||
-    sortedAllocations[1] !== expected[1]
-  ) {
+  if (treasuryIndex === -1) {
     return {
       ok: false,
-      reason: "Split allocations must be exactly 90% writer and 10% treasury",
+      reason: "Platform treasury must be a split recipient",
+    };
+  }
+  if (expectedSplit.allocations[treasuryIndex] !== BigInt(PLATFORM_ALLOCATION)) {
+    return {
+      ok: false,
+      reason: "Platform treasury must receive exactly 10% allocation",
     };
   }
 
-  const total = allocations[0]! + allocations[1]!;
-  if (total !== BigInt(SPLITS_V2_PERCENT_SCALE)) {
-    return { ok: false, reason: "Split allocations must sum to 100%" };
-  }
-
-  return { ok: true, recipients, allocations };
+  return {
+    ok: true,
+    recipients: [...expectedSplit.recipients],
+    allocations: [...expectedSplit.allocations],
+  };
 }

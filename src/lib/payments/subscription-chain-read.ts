@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   erc20Abi,
+  getAddress,
   http,
   parseEventLogs,
   type Address,
@@ -33,6 +34,7 @@ export type ChainTxReader = {
   fetchCrtvaiTransfer(
     txHash: Hash,
     minConfirmations: number,
+    payee: Address,
   ): Promise<CrtvaiTransferObservation>;
 };
 
@@ -66,6 +68,7 @@ export function extractCrtvaiTransferFromReceipt(
   receipt: TransactionReceipt,
   blockTimestampSec: number,
   confirmations: number,
+  payee: Address,
 ): CrtvaiTransferObservation {
   if (receipt.status !== "success") {
     throw new Error("transaction_not_successful");
@@ -82,19 +85,29 @@ export function extractCrtvaiTransferFromReceipt(
       log.address.toLowerCase() === CRTVAI_TOKEN_ADDRESS.toLowerCase(),
   );
 
-  if (tokenLogs.length === 0) {
+  const payeeNormalized = getAddress(payee).toLowerCase();
+  const matching = tokenLogs.filter(
+    (log) => getAddress(log.args.to).toLowerCase() === payeeNormalized,
+  );
+
+  if (matching.length === 0) {
     throw new Error("crtvai_transfer_missing");
   }
 
-  const transfer = tokenLogs[0]!;
+  let totalValue = BigInt(0);
+  for (const log of matching) {
+    totalValue += log.args.value;
+  }
+
+  const first = matching[0]!;
   return {
-    from: transfer.args.from,
-    to: transfer.args.to,
-    value: transfer.args.value,
+    from: first.args.from,
+    to: getAddress(first.args.to),
+    value: totalValue,
     blockNumber: receipt.blockNumber,
     blockTimestampSec,
     confirmations,
-    logEmitter: transfer.address,
+    logEmitter: first.address,
   };
 }
 
@@ -110,6 +123,7 @@ function isExpectedChainError(message: string): boolean {
 async function fetchCrtvaiTransferLive(
   txHash: Hash,
   minConfirmations: number,
+  payee: Address,
 ): Promise<CrtvaiTransferObservation> {
   try {
     const client = createBaseClient();
@@ -132,6 +146,7 @@ async function fetchCrtvaiTransferLive(
       receipt,
       Number(block.timestamp),
       confirmations,
+      payee,
     );
   } catch (error) {
     if (error instanceof ChainTxUnavailableError) {
@@ -148,12 +163,14 @@ async function fetchCrtvaiTransferLive(
 export async function fetchCrtvaiTransfer(
   txHash: Hash,
   minConfirmations: number,
+  payee: Address,
 ): Promise<CrtvaiTransferObservation> {
   if (chainReaderOverride !== undefined && chainReaderOverride !== null) {
     try {
       return await chainReaderOverride.fetchCrtvaiTransfer(
         txHash,
         minConfirmations,
+        payee,
       );
     } catch (error) {
       if (error instanceof ChainTxUnavailableError) {
@@ -166,5 +183,5 @@ export async function fetchCrtvaiTransfer(
       throw new ChainTxUnavailableError();
     }
   }
-  return fetchCrtvaiTransferLive(txHash, minConfirmations);
+  return fetchCrtvaiTransferLive(txHash, minConfirmations, payee);
 }
