@@ -7,7 +7,6 @@ import {
   subscriptions,
   writers,
 } from "@/db/schema";
-import { CRTVAI_TOKEN_ADDRESS } from "./metoken-curve-config";
 import { dearPlatformTreasuryAddress } from "./subscription-config";
 import {
   ChainTxUnavailableError,
@@ -129,9 +128,10 @@ export async function verifySubscriptionPayment(
     writerId: quoteRow.writerId,
     plan: quoteRow.plan,
     usdCents: quoteRow.usdCents,
-    minCrtvaiWei: quoteRow.minCrtvaiWei,
-    curveOutputWei: quoteRow.curveOutputWei,
+    minAmountRaw: quoteRow.minAmountRaw,
     payee: quoteRow.payee,
+    tokenAddress: quoteRow.tokenAddress,
+    tokenDecimals: quoteRow.tokenDecimals,
     expiresAt: quoteRow.expiresAt,
     signature: quoteRow.signature,
   };
@@ -197,7 +197,8 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  const minCrtvaiWei = BigInt(quote.minCrtvaiWei);
+  const minCrtvaiWei = BigInt(quote.minAmountRaw);
+  const quotedTokenAddress = getAddress(quote.tokenAddress);
   const { payer, signer } = resolveSubscriptionPayerAddress(
     quote.wallet as `0x${string}`,
   );
@@ -247,9 +248,7 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  if (
-    transfer.logEmitter.toLowerCase() !== CRTVAI_TOKEN_ADDRESS.toLowerCase()
-  ) {
+  if (getAddress(transfer.logEmitter) !== quotedTokenAddress) {
     throw new SubscriptionVerifyError(
       "wrong_token_emitter",
       "Transfer log must be emitted by CRTVAI token contract",
@@ -308,6 +307,8 @@ export async function verifySubscriptionPayment(
         writerWei: writerWei.toString(),
         platformWei: platformWei.toString(),
         splitAddress: payeeAddress.toLowerCase(),
+        tokenAddress: quotedTokenAddress.toLowerCase(),
+        tokenDecimals: quote.tokenDecimals,
         payoutStatus: "recorded",
       })
       .onConflictDoNothing();

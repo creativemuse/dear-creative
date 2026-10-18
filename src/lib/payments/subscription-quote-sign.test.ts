@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SubscriptionPlan } from "@/db/schema";
 import {
+  CRTVAI_DECIMALS,
+  CRTVAI_TOKEN_ADDRESS,
+} from "./metoken-curve-config";
+import {
   QuoteSigningNotConfiguredError,
   signSubscriptionQuote,
   verifySubscriptionQuoteSignature,
@@ -16,11 +20,11 @@ const baseFields = (): SubscriptionQuoteSignFields => ({
   writerId: "writer-1",
   plan: "monthly" as SubscriptionPlan,
   usdCents: 800,
-  minCrtvaiWei: BigInt(1000),
-  curveOutputWei: BigInt(1100),
+  minAmountRaw: BigInt(1000),
   payee: "0x2222222222222222222222222222222222222222",
+  tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+  tokenDecimals: CRTVAI_DECIMALS,
   expiresAtMs: 1_700_000_000_000,
-  slippageBps: 250,
   chainId: 8453,
 });
 

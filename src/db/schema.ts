@@ -303,6 +303,8 @@ export const paymentLedger = sqliteTable(
     writerWei: text("writer_wei").notNull(),
     platformWei: text("platform_wei").notNull(),
     splitAddress: text("split_address").notNull(),
+    tokenAddress: text("token_address").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
     payoutStatus: text("payout_status", { enum: payoutStatusEnum })
       .notNull()
       .default("recorded"),

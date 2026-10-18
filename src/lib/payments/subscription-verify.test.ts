@@ -24,7 +24,11 @@ import {
   subscriptionPeriodMs,
 } from "@/lib/payments/subscription-config";
 import { signSubscriptionQuote } from "@/lib/payments/subscription-quote-sign";
-import { SUBSCRIPTION_QUOTE_SLIPPAGE_BPS, BASE_CHAIN_ID } from "@/lib/payments/metoken-curve-config";
+import {
+  BASE_CHAIN_ID,
+  CRTVAI_DECIMALS,
+  CRTVAI_TOKEN_ADDRESS,
+} from "@/lib/payments/metoken-curve-config";
 import {
   buildSortedDearSplit,
   computeSplitV2Hash,
@@ -67,7 +71,7 @@ async function openConcurrentDb(): Promise<DearCreativeDb> {
 async function seedQuote(options?: { activePeriodEnd?: Date }) {
   const writerId = randomUUID();
   const quoteId = randomUUID();
-  const minCrtvaiWei = BigInt("1000000000000000000");
+  const minAmountRaw = BigInt("1000000000000000000");
   const privyUserId = "did:privy:test-user";
 
   await testDb.insert(writers).values({
@@ -97,11 +101,11 @@ async function seedQuote(options?: { activePeriodEnd?: Date }) {
     writerId,
     plan: "monthly" as const,
     usdCents: 800,
-    minCrtvaiWei,
-    curveOutputWei: minCrtvaiWei + BigInt(1000),
+    minAmountRaw,
     payee: PAYEE_SPLIT.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: CRTVAI_DECIMALS,
     expiresAtMs: Date.now() + 5 * 60 * 1000,
-    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
   };
 
@@ -113,9 +117,10 @@ async function seedQuote(options?: { activePeriodEnd?: Date }) {
     writerId,
     plan: "monthly",
     usdCents: 800,
-    minCrtvaiWei: minCrtvaiWei.toString(),
-    curveOutputWei: signFields.curveOutputWei.toString(),
+    minAmountRaw: minAmountRaw.toString(),
     payee: PAYEE_SPLIT.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: CRTVAI_DECIMALS,
     expiresAt: new Date(signFields.expiresAtMs),
     signature,
   });

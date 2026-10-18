@@ -20,7 +20,11 @@ import {
   writers,
 } from "@/db/schema";
 import { setPaymentsEnabledForTests as setFlag } from "@/lib/payments/feature-flag";
-import { CRTVAI_TOKEN_ADDRESS } from "@/lib/payments/metoken-curve-config";
+import {
+  BASE_CHAIN_ID,
+  CRTVAI_DECIMALS,
+  CRTVAI_TOKEN_ADDRESS,
+} from "@/lib/payments/metoken-curve-config";
 import {
   ChainTxUnavailableError,
   resetChainTxReaderForTests,
@@ -36,8 +40,6 @@ import {
   subscriptionMinConfirmations,
 } from "@/lib/payments/subscription-config";
 import { signSubscriptionQuote } from "@/lib/payments/subscription-quote-sign";
-import { SUBSCRIPTION_QUOTE_SLIPPAGE_BPS } from "@/lib/payments/metoken-curve-config";
-import { BASE_CHAIN_ID } from "@/lib/payments/metoken-curve-config";
 import {
   buildSortedDearSplit,
   computeSplitV2Hash,
@@ -75,12 +77,12 @@ async function createTestDb() {
 async function seedQuote(options?: {
   expiresAt?: Date;
   privyUserId?: string;
-  minCrtvaiWei?: bigint;
+  minAmountRaw?: bigint;
 }) {
   const writerId = randomUUID();
   const quoteId = randomUUID();
   const privyUserId = options?.privyUserId ?? "did:privy:test-user";
-  const minCrtvaiWei = options?.minCrtvaiWei ?? MIN_CRTVAI;
+  const minAmountRaw = options?.minAmountRaw ?? MIN_CRTVAI;
   const expiresAt =
     options?.expiresAt ?? new Date(Date.now() + 5 * 60 * 1000);
 
@@ -97,11 +99,11 @@ async function seedQuote(options?: {
     writerId,
     plan: "monthly" as const,
     usdCents: 800,
-    minCrtvaiWei,
-    curveOutputWei: minCrtvaiWei + BigInt(1000),
+    minAmountRaw,
     payee: PAYEE_SPLIT.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: CRTVAI_DECIMALS,
     expiresAtMs: expiresAt.getTime(),
-    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
   };
 
@@ -114,14 +116,15 @@ async function seedQuote(options?: {
     writerId,
     plan: "monthly",
     usdCents: 800,
-    minCrtvaiWei: minCrtvaiWei.toString(),
-    curveOutputWei: signFields.curveOutputWei.toString(),
+    minAmountRaw: minAmountRaw.toString(),
     payee: PAYEE_SPLIT.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: CRTVAI_DECIMALS,
     expiresAt,
     signature,
   });
 
-  return { quoteId, writerId, expiresAt, minCrtvaiWei };
+  return { quoteId, writerId, expiresAt, minAmountRaw };
 }
 
 function mockTransfer(
@@ -266,8 +269,8 @@ describe("POST /api/subscriptions/verify", () => {
   });
 
   it("rejects underpay", async () => {
-    const { quoteId, minCrtvaiWei } = await seedQuote();
-    mockTransfer({ value: minCrtvaiWei - BigInt(1) });
+    const { quoteId, minAmountRaw } = await seedQuote();
+    mockTransfer({ value: minAmountRaw - BigInt(1) });
     const response = await verifyRequest(quoteId);
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "underpaid" });
@@ -329,7 +332,7 @@ describe("POST /api/subscriptions/verify", () => {
 
   it("records 90/10 ledger split with remainder to writer", async () => {
     const min = BigInt(101);
-    const { quoteId } = await seedQuote({ minCrtvaiWei: min });
+    const { quoteId } = await seedQuote({ minAmountRaw: min });
     mockTransfer({ value: min });
     const response = await verifyRequest(quoteId);
     expect(response.status).toBe(200);

@@ -10,7 +10,7 @@ import {
 import {
   BASE_CHAIN_ID,
   CRTVAI_DECIMALS,
-  CRTVAI_METOKEN_ADDRESS,
+  CRTVAI_TOKEN_ADDRESS,
   SUBSCRIPTION_CURVE_STABILITY_MAX_BPS,
   SUBSCRIPTION_CURVE_STABILITY_WINDOW_MS,
   SUBSCRIPTION_QUOTE_EXPIRY_SECONDS,
@@ -233,11 +233,11 @@ export async function createSubscriptionQuote(
     writerId: input.writerId,
     plan: input.plan,
     usdCents,
-    minCrtvaiWei,
-    curveOutputWei,
+    minAmountRaw: minCrtvaiWei,
     payee,
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: CRTVAI_DECIMALS,
     expiresAtMs,
-    slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
   };
 
@@ -252,7 +252,7 @@ export async function createSubscriptionQuote(
     usdCents,
     minAmountRaw: minCrtvaiWei.toString(),
     payee,
-    tokenAddress: CRTVAI_METOKEN_ADDRESS.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
     tokenDecimals: CRTVAI_DECIMALS,
     expiresAt: new Date(expiresAtMs),
     signature,

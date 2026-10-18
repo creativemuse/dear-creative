@@ -23,6 +23,8 @@ import {
   setPaymentsEnabledForTests as setFlag,
 } from "@/lib/payments/feature-flag";
 import {
+  CRTVAI_DECIMALS,
+  CRTVAI_TOKEN_ADDRESS,
   SUBSCRIPTION_QUOTE_EXPIRY_SECONDS,
   SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
 } from "@/lib/payments/metoken-curve-config";
@@ -203,11 +205,11 @@ describe("POST /api/subscriptions/quote", () => {
       writerId,
       plan: "yearly",
       usdCents: 8000,
-      minCrtvaiWei,
-      curveOutputWei,
+      minAmountRaw: minCrtvaiWei,
       payee: PAYEE_SPLIT.toLowerCase(),
+      tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+      tokenDecimals: CRTVAI_DECIMALS,
       expiresAtMs: new Date(body.expiresAt).getTime(),
-      slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
       chainId: 8453,
     };
     expect(verifySubscriptionQuoteSignature(signFields, body.signature)).toBe(
