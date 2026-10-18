@@ -14,7 +14,11 @@ import {
   subscriptions,
   writers,
 } from "@/db/schema";
-import { CRTVAI_TOKEN_ADDRESS } from "@/lib/payments/metoken-curve-config";
+import {
+  BASE_CHAIN_ID,
+  CRTVAI_DECIMALS,
+  CRTVAI_TOKEN_ADDRESS,
+} from "@/lib/payments/metoken-curve-config";
 import {
   resetChainTxReaderForTests,
   setChainTxReaderForTests,
@@ -24,11 +28,6 @@ import {
   subscriptionPeriodMs,
 } from "@/lib/payments/subscription-config";
 import { signSubscriptionQuote } from "@/lib/payments/subscription-quote-sign";
-import {
-  BASE_CHAIN_ID,
-  CRTVAI_DECIMALS,
-  CRTVAI_TOKEN_ADDRESS,
-} from "@/lib/payments/metoken-curve-config";
 import {
   buildSortedDearSplit,
   computeSplitV2Hash,
