@@ -15,7 +15,8 @@ export type DeliveryGateFailure =
   | "not_approved"
   | "content_changed"
   | "approval_expired"
-  | "already_delivered";
+  | "already_delivered"
+  | "imported_archive";
 
 export type DeliveryGatePost = {
   id: string;
@@ -45,6 +46,10 @@ export async function assertDeliverable(
   const post = postRows[0];
   if (!post) {
     return { ok: false, reason: "not_found" };
+  }
+
+  if (post.source === "paragraph") {
+    return { ok: false, reason: "imported_archive" };
   }
 
   const approvalRows = await db

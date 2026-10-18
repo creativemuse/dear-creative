@@ -2,7 +2,7 @@
   "version": "6",
   "dialect": "sqlite",
   "id": "e92385eb-c1c5-4754-b6f3-3eabe64a3a15",
-  "prevId": "664a7af2-ac90-40ae-b101-ff745de4df4c",
+  "prevId": "31478399-9902-42d2-98d4-c57563d0b7d9",
   "tables": {
     "approvals": {
       "name": "approvals",
