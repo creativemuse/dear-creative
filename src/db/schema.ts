@@ -233,6 +233,56 @@ export const deliveryReceiptChunks = sqliteTable(
   ],
 );
 
+export const subscriptionPlanEnum = ["monthly", "yearly"] as const;
+export type SubscriptionPlan = (typeof subscriptionPlanEnum)[number];
+
+/** Newsletter writers; payout splits are deployed off-platform (Rex). */
+export const writers = sqliteTable(
+  "writers",
+  {
+    id: text("id").primaryKey(),
+    payoutSplitAddress: text("payout_split_address"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [index("writers_payout_split_idx").on(table.payoutSplitAddress)],
+);
+
+export const subscriptionQuotes = sqliteTable(
+  "subscription_quotes",
+  {
+    id: text("id").primaryKey(),
+    privyUserId: text("privy_user_id").notNull(),
+    wallet: text("wallet").notNull(),
+    writerId: text("writer_id")
+      .notNull()
+      .references(() => writers.id),
+    plan: text("plan", { enum: subscriptionPlanEnum }).notNull(),
+    usdCents: integer("usd_cents").notNull(),
+    minCrtvaiWei: text("min_crtvai_wei").notNull(),
+    curveOutputWei: text("curve_output_wei").notNull(),
+    payee: text("payee").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    signature: text("signature").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index("subscription_quotes_writer_created_idx").on(
+      table.writerId,
+      table.createdAt,
+    ),
+    index("subscription_quotes_privy_writer_plan_created_idx").on(
+      table.privyUserId,
+      table.writerId,
+      table.plan,
+      table.createdAt,
+    ),
+  ],
+);
+
 export const approvals = sqliteTable(
   "approvals",
   {
