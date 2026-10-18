@@ -112,3 +112,22 @@ npm start
 ## Cloud Agent note
 
 Cloud agents typically have **no gcloud credentials**. Deployment and smoke draft must be run from a machine or CI identity with GCP access.
+
+## Adam Editorial Studio (`/adam`), Voice, Ideas & Monday Schedule
+
+The unified private studio at `/adam` (also accessible via `/approvals` and `/admin`) provides:
+
+1. **Multimodal Chat (`POST /api/adam/chat`):** Chat with Adam and attach reference images (`image/*`), PDFs (`application/pdf`), or text/markdown files (`text/*`, `.md`, `.csv`, `.json`).
+2. **Voice Input & Output (`POST /api/adam/voice/stt`, `POST /api/adam/voice/tts`):**
+   - Server-side Google Gemini Multimodal Audio STT + Gemini / Google Cloud TTS (`GEMINI_API_KEY`).
+   - Automatic zero-latency client fallback using the browser's local Web Speech API (`SpeechRecognition` + `speechSynthesis`).
+3. **Ideas & Rough Drafts (`GET/POST/PATCH /api/adam/ideas`):**
+   - Paste an idea or rough draft on `/adam` to either immediately turn it into a draft post in the Approval Queue (`mode: "draft_now"`) or queue it in `adam_ideas` (`mode: "queue"`).
+4. **Weekly Scheduled Issue Drafting (`GET/PUT/POST /api/adam/schedule`):**
+   - Default schedule: `0 9 * * 1` (`America/New_York` — Every Monday at 9:00 AM).
+   - Prioritizes queued ideas from `adam_ideas` first; if none are queued, autonomously drafts a fresh Dear Creative issue into the Approval Queue.
+   - Provision or update the Google Cloud Scheduler job with:
+     ```bash
+     ./scripts/gcp/adam-schedule-cloud-scheduler.sh
+     ```
+

@@ -4,6 +4,7 @@ import type { DearCreativeDb } from "@/db/client";
 import { approvals, posts } from "@/db/schema";
 import { computeApprovalContentHash } from "@/lib/approval/content-hash";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
+import { renderMarkdownToSafeHtml } from "@/lib/html/markdown-to-html";
 
 export type PublishDraftInput = {
   slug: string;
@@ -11,6 +12,8 @@ export type PublishDraftInput = {
   teaserText?: string | null;
   emailSubject?: string | null;
   emailHtml?: string | null;
+  bodyHtml?: string | null;
+  markdown?: string | null;
   sponsorId?: string | null;
   dryRun?: boolean;
 };
@@ -36,12 +39,19 @@ export async function publishDraftToTurso(
   db: DearCreativeDb,
   input: PublishDraftInput,
 ): Promise<PublishDraftResult> {
+  const renderedFromMarkdown = input.markdown?.trim()
+    ? renderMarkdownToSafeHtml(input.markdown)
+    : null;
+  const resolvedEmailHtml = input.emailHtml ?? renderedFromMarkdown ?? null;
+  const resolvedBodyHtml =
+    input.bodyHtml ?? renderedFromMarkdown ?? resolvedEmailHtml;
+
   const snapshot = {
     slug: input.slug.trim(),
     title: input.title.trim(),
     teaserText: input.teaserText ?? null,
     emailSubject: input.emailSubject ?? null,
-    emailHtml: input.emailHtml ?? null,
+    emailHtml: resolvedEmailHtml,
     sponsorId: input.sponsorId ?? null,
   };
 
@@ -73,6 +83,7 @@ export async function publishDraftToTurso(
     teaserText: snapshot.teaserText,
     emailSubject: snapshot.emailSubject,
     emailHtml: snapshot.emailHtml,
+    bodyHtml: resolvedBodyHtml,
     sponsorId: snapshot.sponsorId,
   });
 

@@ -378,3 +378,56 @@ export const approvals = sqliteTable(
     index("approvals_status_idx").on(table.status),
   ],
 );
+
+export const adamIdeaStatusEnum = ["queued", "drafted", "archived"] as const;
+export type AdamIdeaStatus = (typeof adamIdeaStatusEnum)[number];
+
+export const adamScheduleRunStatusEnum = [
+  "idle",
+  "success",
+  "failed",
+  "skipped",
+] as const;
+export type AdamScheduleRunStatus = (typeof adamScheduleRunStatusEnum)[number];
+
+export const adamIdeas = sqliteTable(
+  "adam_ideas",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    rawContent: text("raw_content").notNull(),
+    attachmentsJson: text("attachments_json"),
+    status: text("status", { enum: adamIdeaStatusEnum })
+      .notNull()
+      .default("queued"),
+    draftPostId: text("draft_post_id").references(() => posts.id),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index("adam_ideas_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const adamSchedules = sqliteTable("adam_schedules", {
+  id: text("id").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  cronExpression: text("cron_expression").notNull().default("0 9 * * 1"),
+  timezone: text("timezone").notNull().default("America/New_York"),
+  instructions: text("instructions"),
+  lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
+  lastRunStatus: text("last_run_status", { enum: adamScheduleRunStatusEnum })
+    .notNull()
+    .default("idle"),
+  lastRunMessage: text("last_run_message"),
+  lastDraftPostId: text("last_draft_post_id").references(() => posts.id),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+

@@ -7,6 +7,11 @@ export type ApprovalQueueItem = {
   slug: string;
   title: string;
   status: string;
+  postStatus: string;
+  teaserText: string | null;
+  emailSubject: string | null;
+  emailHtml: string | null;
+  bodyHtml: string | null;
   contentHash: string;
   createdAt: string;
 };
@@ -20,6 +25,11 @@ export async function listApprovalQueue(
       slug: posts.slug,
       title: posts.title,
       status: approvals.status,
+      postStatus: posts.status,
+      teaserText: posts.teaserText,
+      emailSubject: posts.emailSubject,
+      emailHtml: posts.emailHtml,
+      bodyHtml: posts.bodyHtml,
       contentHash: approvals.contentHash,
       createdAt: approvals.createdAt,
     })
@@ -32,6 +42,11 @@ export async function listApprovalQueue(
     slug: row.slug,
     title: row.title,
     status: row.status,
+    postStatus: row.postStatus,
+    teaserText: row.teaserText,
+    emailSubject: row.emailSubject,
+    emailHtml: row.emailHtml,
+    bodyHtml: row.bodyHtml,
     contentHash: row.contentHash,
     createdAt: row.createdAt.toISOString(),
   }));

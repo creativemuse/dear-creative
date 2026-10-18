@@ -1,3 +1,4 @@
+import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db/client";
 import { approvePost } from "@/lib/approval/approve-post";
@@ -29,5 +30,6 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  revalidateTag("posts-recent", "max");
   return NextResponse.json({ outcome: "approved", postId });
 }

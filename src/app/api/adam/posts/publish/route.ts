@@ -13,6 +13,8 @@ type PublishBody = {
   teaserText?: string | null;
   emailSubject?: string | null;
   emailHtml?: string | null;
+  bodyHtml?: string | null;
+  markdown?: string | null;
   sponsorId?: string | null;
   dryRun?: boolean;
 };
@@ -46,6 +48,8 @@ export async function POST(request: Request) {
       teaserText: body.teaserText,
       emailSubject: body.emailSubject,
       emailHtml: body.emailHtml,
+      bodyHtml: body.bodyHtml,
+      markdown: body.markdown,
       sponsorId: body.sponsorId,
       dryRun: body.dryRun,
     });

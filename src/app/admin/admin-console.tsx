@@ -61,6 +61,12 @@ export function AdminConsole() {
           >
             Sign out
           </button>
+          <a
+            href="/adam"
+            className="ml-3 inline-block rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          >
+            Open Adam Studio →
+          </a>
         </div>
       )}
       {session ? (

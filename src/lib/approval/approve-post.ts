@@ -58,6 +58,16 @@ export async function approvePost(
     })
     .where(eq(approvals.id, approval.id));
 
+  await db
+    .update(posts)
+    .set({
+      status: "published",
+      publishedAt: post.publishedAt ?? now,
+      bodyHtml: post.bodyHtml ?? post.emailHtml,
+      updatedAt: now,
+    })
+    .where(eq(posts.id, postId));
+
   await writeAuditEvent(db, {
     actor: approvedBy,
     action: "approvePost",
@@ -67,4 +77,44 @@ export async function approvePost(
   });
 
   return "approved";
+}
+
+export type RejectPostResult = "rejected" | "not_found" | "not_pending";
+
+export async function rejectPost(
+  db: DearCreativeDb,
+  postId: string,
+  rejectedBy: string,
+): Promise<RejectPostResult> {
+  const approvalRows = await db
+    .select()
+    .from(approvals)
+    .where(eq(approvals.postId, postId))
+    .limit(1);
+  const approval = approvalRows[0];
+  if (!approval) {
+    return "not_found";
+  }
+  if (approval.status !== "pending") {
+    return "not_pending";
+  }
+
+  const now = new Date();
+  await db
+    .update(approvals)
+    .set({
+      status: "rejected",
+      updatedAt: now,
+    })
+    .where(eq(approvals.id, approval.id));
+
+  await writeAuditEvent(db, {
+    actor: rejectedBy,
+    action: "rejectPost",
+    entityType: "post",
+    entityId: postId,
+    payload: {},
+  });
+
+  return "rejected";
 }

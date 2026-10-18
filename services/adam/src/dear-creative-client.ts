@@ -10,6 +10,8 @@ export type PublishDraftPayload = {
   teaserText?: string | null;
   emailSubject?: string | null;
   emailHtml?: string | null;
+  bodyHtml?: string | null;
+  markdown?: string | null;
   sponsorId?: string | null;
   dryRun?: boolean;
 };
@@ -26,6 +28,15 @@ export type ActiveSponsor = {
   name: string;
   slotHtml: string | null;
   ctaUrl: string | null;
+};
+
+export type QueuedIdea = {
+  id: string;
+  title: string;
+  rawContent: string;
+  status: "queued" | "drafted" | "archived";
+  draftPostId: string | null;
+  createdAt: string;
 };
 
 export type FetchLike = (
@@ -83,4 +94,57 @@ export async function fetchActiveSponsors(
     throw new Error("Invalid sponsors response");
   }
   return body.sponsors;
+}
+
+export async function fetchQueuedIdeas(
+  fetchFn: FetchLike = fetch,
+): Promise<QueuedIdea[]> {
+  assertSafeAdamRuntimeFlags();
+  const base = getDearCreativeApiBaseUrl();
+  const response = await fetchFn(`${base}/api/adam/ideas?status=queued`, {
+    method: "GET",
+    headers: authHeaders(),
+  });
+  const body = (await response.json()) as
+    | { ideas: QueuedIdea[] }
+    | { error?: string };
+  if (!response.ok) {
+    throw new Error(
+      "error" in body && body.error
+        ? body.error
+        : `ideas fetch failed (${response.status})`,
+    );
+  }
+  if (!("ideas" in body)) {
+    throw new Error("Invalid ideas response");
+  }
+  return body.ideas;
+}
+
+export async function markIdeaDrafted(
+  payload: { ideaId: string; draftPostId: string },
+  fetchFn: FetchLike = fetch,
+): Promise<QueuedIdea> {
+  assertSafeAdamRuntimeFlags();
+  const base = getDearCreativeApiBaseUrl();
+  const response = await fetchFn(`${base}/api/adam/ideas`, {
+    method: "PATCH",
+    headers: authHeaders(),
+    body: JSON.stringify({
+      ideaId: payload.ideaId,
+      action: "mark_drafted",
+      draftPostId: payload.draftPostId,
+    }),
+  });
+  const body = (await response.json()) as
+    | { idea: QueuedIdea }
+    | { error?: string };
+  if (!response.ok || !("idea" in body)) {
+    throw new Error(
+      "error" in body && body.error
+        ? body.error
+        : `mark idea drafted failed (${response.status})`,
+    );
+  }
+  return body.idea;
 }
