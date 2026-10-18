@@ -24,6 +24,7 @@ import {
   type StoredSubscriptionQuoteRow,
 } from "./subscription-quote-sign";
 import { resolveSubscriptionPayerAddress } from "./smart-account";
+import { verifyWriterSplit } from "./writer-split-verify";
 import type { Hash } from "viem";
 import { getAddress } from "viem";
 
@@ -172,6 +173,15 @@ export async function verifySubscriptionPayment(
   }
 
   const splitAddress = getAddress(writer.payoutSplitAddress);
+  const splitVerification = await verifyWriterSplit(splitAddress);
+  if (!splitVerification.ok) {
+    throw new SubscriptionVerifyError(
+      "invalid_writer_split",
+      splitVerification.reason,
+      422,
+    );
+  }
+
   const minCrtvaiWei = BigInt(quote.minCrtvaiWei);
   const { payer, signer } = resolveSubscriptionPayerAddress(
     quote.wallet as `0x${string}`,

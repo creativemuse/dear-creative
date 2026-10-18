@@ -8,9 +8,19 @@ export const SPLITS_V2_PERCENT_SCALE = 1_000_000;
 const WRITER_ALLOCATION = 900_000;
 const PLATFORM_ALLOCATION = 100_000;
 
+const ZERO_ADDRESS =
+  "0x0000000000000000000000000000000000000000" as Address;
+
 const PULL_SPLIT_ABI = parseAbi([
   "function getRecipients() view returns (address[] recipients, uint256[] allocations)",
+  "function controller() view returns (address)",
 ]);
+
+export type WriterSplitSnapshot = {
+  recipients: Address[];
+  allocations: bigint[];
+  controller: Address;
+};
 
 export type WriterSplitVerification = {
   ok: true;
@@ -24,9 +34,7 @@ export type WriterSplitVerificationError = {
 };
 
 export type WriterSplitReader = {
-  readSplitRecipients(
-    splitAddress: Address,
-  ): Promise<{ recipients: Address[]; allocations: bigint[] }>;
+  readWriterSplit(splitAddress: Address): Promise<WriterSplitSnapshot>;
 };
 
 let splitReaderOverride: WriterSplitReader | null | undefined;
@@ -48,9 +56,9 @@ function alchemyRpcUrl(): string {
     : "https://mainnet.base.org";
 }
 
-async function readSplitRecipientsLive(
+async function readWriterSplitLive(
   splitAddress: Address,
-): Promise<{ recipients: Address[]; allocations: bigint[] }> {
+): Promise<WriterSplitSnapshot> {
   const client = createPublicClient({
     chain: base,
     transport: http(alchemyRpcUrl(), {
@@ -62,35 +70,53 @@ async function readSplitRecipientsLive(
     abi: PULL_SPLIT_ABI,
     functionName: "getRecipients",
   });
+  const controller = await client.readContract({
+    address: splitAddress,
+    abi: PULL_SPLIT_ABI,
+    functionName: "controller",
+  });
   return {
     recipients: [...recipients],
     allocations: [...allocations],
+    controller,
   };
 }
 
-export async function readWriterSplitRecipients(
+export async function readWriterSplit(
   splitAddress: Address,
-): Promise<{ recipients: Address[]; allocations: bigint[] }> {
+): Promise<WriterSplitSnapshot> {
   if (splitReaderOverride !== undefined && splitReaderOverride !== null) {
-    return splitReaderOverride.readSplitRecipients(splitAddress);
+    return splitReaderOverride.readWriterSplit(splitAddress);
   }
-  return readSplitRecipientsLive(splitAddress);
+  return readWriterSplitLive(splitAddress);
 }
 
 /**
- * Validates a Splits v2 pull split is exactly 90% / 10%.
- * Recipient mutability on-chain is pending G2 policy review.
+ * Validates a Splits v2 pull split for Dear Creative paid signup.
+ *
+ * G2 policy: writer splits must be **immutable** (controller `0x0`). Recipient
+ * or allocation changes require deploying a **new** split contract; update
+ * `writers.payout_split_address` to point at the new address.
  */
 export async function verifyWriterSplit(
   splitAddress: Address,
 ): Promise<WriterSplitVerification | WriterSplitVerificationError> {
-  let recipients: Address[];
-  let allocations: bigint[];
+  let snapshot: WriterSplitSnapshot;
   try {
-    ({ recipients, allocations } = await readWriterSplitRecipients(splitAddress));
+    snapshot = await readWriterSplit(splitAddress);
   } catch {
     return { ok: false, reason: "Could not read split recipients on Base" };
   }
+
+  if (snapshot.controller.toLowerCase() !== ZERO_ADDRESS) {
+    return {
+      ok: false,
+      reason:
+        "Split must be immutable (controller must be zero); deploy a new split to change payout wallets",
+    };
+  }
+
+  const { recipients, allocations } = snapshot;
 
   if (recipients.length !== 2 || allocations.length !== 2) {
     return {

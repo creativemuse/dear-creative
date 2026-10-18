@@ -27,6 +27,8 @@ import {
   type SubscriptionQuoteSignFields,
 } from "./subscription-quote-sign";
 import { usdCentsForPlan, usdc6FromUsdCents } from "./subscription-pricing";
+import { verifyWriterSplit } from "./writer-split-verify";
+import { getAddress } from "viem";
 
 export type SubscriptionQuoteRequest = {
   plan: SubscriptionPlan;
@@ -148,6 +150,17 @@ export async function createSubscriptionQuote(
     throw new SubscriptionQuoteError(
       "paid_signup_unavailable",
       "Paid signup unavailable for this writer",
+      422,
+    );
+  }
+
+  const splitVerification = await verifyWriterSplit(
+    getAddress(writer.payoutSplitAddress),
+  );
+  if (!splitVerification.ok) {
+    throw new SubscriptionQuoteError(
+      "invalid_writer_split",
+      splitVerification.reason,
       422,
     );
   }

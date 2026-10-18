@@ -38,6 +38,10 @@ import {
 import { signSubscriptionQuote } from "@/lib/payments/subscription-quote-sign";
 import { SUBSCRIPTION_QUOTE_SLIPPAGE_BPS } from "@/lib/payments/metoken-curve-config";
 import { BASE_CHAIN_ID } from "@/lib/payments/metoken-curve-config";
+import {
+  resetWriterSplitReaderForTests,
+  setWriterSplitReaderForTests,
+} from "@/lib/payments/writer-split-verify";
 import { POST } from "./route";
 
 const QUOTE_SIGNING_SECRET = "test-quote-signing-secret-key-32bytes!!";
@@ -162,12 +166,23 @@ describe("POST /api/subscriptions/verify", () => {
       signerAddress: SIGNER,
     }));
     mockTransfer();
+    setWriterSplitReaderForTests({
+      readWriterSplit: vi.fn().mockResolvedValue({
+        controller: "0x0000000000000000000000000000000000000000",
+        recipients: [
+          "0x1111111111111111111111111111111111111111",
+          "0x2222222222222222222222222222222222222222",
+        ],
+        allocations: [BigInt(900_000), BigInt(100_000)],
+      }),
+    });
   });
 
   afterEach(() => {
     setFlag(undefined);
     resetPaymentsLinkedWalletResolverForTests();
     resetChainTxReaderForTests();
+    resetWriterSplitReaderForTests();
     vi.unstubAllEnvs();
     vi.useRealTimers();
   });
