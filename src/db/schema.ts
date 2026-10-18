@@ -299,9 +299,9 @@ export const paymentLedger = sqliteTable(
     quoteId: text("quote_id")
       .notNull()
       .references(() => subscriptionQuotes.id),
-    grossWei: text("gross_wei").notNull(),
-    writerWei: text("writer_wei").notNull(),
-    platformWei: text("platform_wei").notNull(),
+    grossAmountRaw: text("gross_amount_raw").notNull(),
+    writerAmountRaw: text("writer_amount_raw").notNull(),
+    platformAmountRaw: text("platform_amount_raw").notNull(),
     splitAddress: text("split_address").notNull(),
     tokenAddress: text("token_address").notNull(),
     tokenDecimals: integer("token_decimals").notNull(),

@@ -333,9 +333,9 @@ describe("POST /api/subscriptions/verify", () => {
     expect(response.status).toBe(200);
 
     const [ledger] = await testDb.select().from(paymentLedger);
-    expect(ledger?.grossWei).toBe("101");
-    expect(ledger?.platformWei).toBe("10");
-    expect(ledger?.writerWei).toBe("91");
+    expect(ledger?.grossAmountRaw).toBe("101");
+    expect(ledger?.platformAmountRaw).toBe("10");
+    expect(ledger?.writerAmountRaw).toBe("91");
     expect(ledger?.payoutStatus).toBe("recorded");
     expect(ledger?.quoteId).toBe(quoteId);
     expect(ledger?.tokenAddress.toLowerCase()).toBe(
