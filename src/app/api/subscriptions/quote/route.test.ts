@@ -23,10 +23,11 @@ import {
   setPaymentsEnabledForTests as setFlag,
 } from "@/lib/payments/feature-flag";
 import {
+  BASE_USDC_ADDRESS,
   SUBSCRIPTION_QUOTE_EXPIRY_SECONDS,
   SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
 } from "@/lib/payments/metoken-curve-config";
-import { applySlippageMinCrtvaiWei } from "@/lib/payments/metoken-curve-math";
+import { usdcSubscriptionAmountUnits } from "@/lib/payments/subscription-usdc-pricing";
 import {
   MeTokenCurveUnavailableError,
   setMeTokenCurveReaderForTests,
@@ -187,14 +188,10 @@ describe("POST /api/subscriptions/quote", () => {
       ).toISOString(),
     );
 
-    const curveOutputWei = BigInt(body.curveOutputWei);
-    const minCrtvaiWei = BigInt(body.minCrtvaiWei);
-    expect(minCrtvaiWei).toBe(
-      applySlippageMinCrtvaiWei(
-        curveOutputWei,
-        SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
-      ),
-    );
+    const expectedUsdc = usdcSubscriptionAmountUnits("yearly");
+    expect(body.paymentToken).toBe("usdc");
+    expect(BigInt(body.minCrtvaiWei)).toBe(expectedUsdc);
+    expect(body.tokenAddress.toLowerCase()).toBe(BASE_USDC_ADDRESS.toLowerCase());
 
     const signFields: SubscriptionQuoteSignFields = {
       quoteId: body.quoteId,
@@ -203,9 +200,11 @@ describe("POST /api/subscriptions/quote", () => {
       writerId,
       plan: "yearly",
       usdCents: 8000,
-      minCrtvaiWei,
-      curveOutputWei,
+      minCrtvaiWei: expectedUsdc,
+      curveOutputWei: expectedUsdc,
       payee: PAYEE_SPLIT.toLowerCase(),
+      tokenAddress: BASE_USDC_ADDRESS.toLowerCase(),
+      tokenDecimals: 6,
       expiresAtMs: new Date(body.expiresAt).getTime(),
       slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
       chainId: 8453,
@@ -240,6 +239,7 @@ describe("POST /api/subscriptions/quote", () => {
   });
 
   it("returns 503 when curve pricing is unavailable", async () => {
+    vi.stubEnv("PAYMENT_TOKEN", "crtvai");
     setMeTokenCurveReaderForTests({
       readMeTokensMintedForDeposit: vi
         .fn()
@@ -266,6 +266,7 @@ describe("POST /api/subscriptions/quote", () => {
   });
 
   it("rejects when curve output moved more than 20% within 10 minutes", async () => {
+    vi.stubEnv("PAYMENT_TOKEN", "crtvai");
     const writerId = randomUUID();
     await testDb.insert(writers).values({
       id: writerId,
@@ -299,5 +300,27 @@ describe("POST /api/subscriptions/quote", () => {
     );
     expect(second.status).toBe(409);
     expect(await second.json()).toMatchObject({ code: "quote_curve_unstable" });
+  });
+
+  it("returns 503 when PAYMENT_TOKEN is invalid", async () => {
+    vi.stubEnv("PAYMENT_TOKEN", "weth");
+    const writerId = randomUUID();
+    await testDb.insert(writers).values({
+      id: writerId,
+      payoutSplitAddress: PAYEE_SPLIT,
+      payoutWalletAddress: WRITER_RECIPIENT,
+    });
+    const response = await POST(
+      new Request("http://localhost/api/subscriptions/quote", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer test-token",
+        },
+        body: JSON.stringify({ plan: "monthly", writerId }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "payment_token_invalid" });
   });
 });

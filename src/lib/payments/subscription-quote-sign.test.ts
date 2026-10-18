@@ -19,6 +19,8 @@ const baseFields = (): SubscriptionQuoteSignFields => ({
   minCrtvaiWei: BigInt(1000),
   curveOutputWei: BigInt(1100),
   payee: "0x2222222222222222222222222222222222222222",
+  tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  tokenDecimals: 6,
   expiresAtMs: 1_700_000_000_000,
   slippageBps: 250,
   chainId: 8453,

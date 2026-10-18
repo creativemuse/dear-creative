@@ -303,6 +303,8 @@ export const paymentLedger = sqliteTable(
     writerWei: text("writer_wei").notNull(),
     platformWei: text("platform_wei").notNull(),
     splitAddress: text("split_address").notNull(),
+    tokenAddress: text("token_address").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
     payoutStatus: text("payout_status", { enum: payoutStatusEnum })
       .notNull()
       .default("recorded"),
@@ -330,6 +332,8 @@ export const subscriptionQuotes = sqliteTable(
     minCrtvaiWei: text("min_crtvai_wei").notNull(),
     curveOutputWei: text("curve_output_wei").notNull(),
     payee: text("payee").notNull(),
+    tokenAddress: text("token_address").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
     signature: text("signature").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

@@ -100,6 +100,8 @@ async function seedQuote(options?: { activePeriodEnd?: Date }) {
     minCrtvaiWei,
     curveOutputWei: minCrtvaiWei + BigInt(1000),
     payee: PAYEE_SPLIT.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: 18,
     expiresAtMs: Date.now() + 5 * 60 * 1000,
     slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
@@ -116,6 +118,8 @@ async function seedQuote(options?: { activePeriodEnd?: Date }) {
     minCrtvaiWei: minCrtvaiWei.toString(),
     curveOutputWei: signFields.curveOutputWei.toString(),
     payee: PAYEE_SPLIT.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: 18,
     expiresAt: new Date(signFields.expiresAtMs),
     signature,
   });
@@ -128,6 +132,7 @@ describe("verifySubscriptionPayment concurrency", () => {
     testDb = await createTestDb();
     vi.stubEnv("QUOTE_SIGNING_SECRET", QUOTE_SIGNING_SECRET);
     vi.stubEnv("DEAR_PLATFORM_TREASURY_ADDRESS", TREASURY);
+    vi.stubEnv("PAYMENT_TOKEN", "crtvai");
     const expected = buildSortedDearSplit({
       writerRecipient: WRITER_RECIPIENT,
       treasuryAddress: TREASURY,
@@ -139,9 +144,9 @@ describe("verifySubscriptionPayment concurrency", () => {
       }),
     });
     setChainTxReaderForTests({
-      fetchCrtvaiTransfer: vi
+      fetchErc20Transfer: vi
         .fn()
-        .mockImplementation(async (_hash, _conf, payee, _allowedFrom) => ({
+        .mockImplementation(async (_hash, _conf, _token, payee, _allowedFrom) => ({
         from: SIGNER,
         to: payee,
         value: BigInt("1000000000000000000"),

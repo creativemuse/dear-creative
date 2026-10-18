@@ -14,7 +14,7 @@ import {
   METOKEN_CURVE_RPC_TIMEOUT_MS,
 } from "./metoken-curve-config";
 
-export type CrtvaiTransferObservation = {
+export type Erc20TransferObservation = {
   from: Address;
   to: Address;
   value: bigint;
@@ -24,6 +24,9 @@ export type CrtvaiTransferObservation = {
   logEmitter: Address;
 };
 
+/** @deprecated Use Erc20TransferObservation */
+export type CrtvaiTransferObservation = Erc20TransferObservation;
+
 export class ChainTxUnavailableError extends Error {
   constructor() {
     super("Transaction verification is temporarily unavailable.");
@@ -31,12 +34,13 @@ export class ChainTxUnavailableError extends Error {
 }
 
 export type ChainTxReader = {
-  fetchCrtvaiTransfer(
+  fetchErc20Transfer(
     txHash: Hash,
     minConfirmations: number,
+    tokenAddress: Address,
     payee: Address,
     allowedFromAddresses: readonly Address[],
-  ): Promise<CrtvaiTransferObservation>;
+  ): Promise<Erc20TransferObservation>;
 };
 
 let chainReaderOverride: ChainTxReader | null | undefined;
@@ -65,13 +69,14 @@ function createBaseClient() {
   });
 }
 
-export function extractCrtvaiTransferFromReceipt(
+export function extractErc20TransferFromReceipt(
   receipt: TransactionReceipt,
   blockTimestampSec: number,
   confirmations: number,
+  tokenAddress: Address,
   payee: Address,
   allowedFromAddresses: readonly Address[],
-): CrtvaiTransferObservation {
+): Erc20TransferObservation {
   if (receipt.status !== "success") {
     throw new Error("transaction_not_successful");
   }
@@ -82,9 +87,9 @@ export function extractCrtvaiTransferFromReceipt(
     logs: receipt.logs,
   });
 
+  const tokenNormalized = getAddress(tokenAddress).toLowerCase();
   const tokenLogs = logs.filter(
-    (log) =>
-      log.address.toLowerCase() === CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    (log) => log.address.toLowerCase() === tokenNormalized,
   );
 
   const payeeNormalized = getAddress(payee).toLowerCase();
@@ -98,7 +103,7 @@ export function extractCrtvaiTransferFromReceipt(
   );
 
   if (matching.length === 0) {
-    throw new Error("crtvai_transfer_missing");
+    throw new Error("token_transfer_missing");
   }
 
   let totalValue = BigInt(0);
@@ -118,21 +123,41 @@ export function extractCrtvaiTransferFromReceipt(
   };
 }
 
+/** @deprecated Use extractErc20TransferFromReceipt */
+export function extractCrtvaiTransferFromReceipt(
+  receipt: TransactionReceipt,
+  blockTimestampSec: number,
+  confirmations: number,
+  payee: Address,
+  allowedFromAddresses: readonly Address[],
+): Erc20TransferObservation {
+  return extractErc20TransferFromReceipt(
+    receipt,
+    blockTimestampSec,
+    confirmations,
+    CRTVAI_TOKEN_ADDRESS,
+    payee,
+    allowedFromAddresses,
+  );
+}
+
 function isExpectedChainError(message: string): boolean {
   return (
     message === "insufficient_confirmations" ||
+    message === "token_transfer_missing" ||
     message === "crtvai_transfer_missing" ||
     message === "transaction_not_successful" ||
     message === "receipt_not_found"
   );
 }
 
-async function fetchCrtvaiTransferLive(
+async function fetchErc20TransferLive(
   txHash: Hash,
   minConfirmations: number,
+  tokenAddress: Address,
   payee: Address,
   allowedFromAddresses: readonly Address[],
-): Promise<CrtvaiTransferObservation> {
+): Promise<Erc20TransferObservation> {
   try {
     const client = createBaseClient();
     const receipt = await client.getTransactionReceipt({ hash: txHash });
@@ -150,10 +175,11 @@ async function fetchCrtvaiTransferLive(
       throw new Error("insufficient_confirmations");
     }
 
-    return extractCrtvaiTransferFromReceipt(
+    return extractErc20TransferFromReceipt(
       receipt,
       Number(block.timestamp),
       confirmations,
+      tokenAddress,
       payee,
       allowedFromAddresses,
     );
@@ -169,17 +195,19 @@ async function fetchCrtvaiTransferLive(
   }
 }
 
-export async function fetchCrtvaiTransfer(
+export async function fetchErc20Transfer(
   txHash: Hash,
   minConfirmations: number,
+  tokenAddress: Address,
   payee: Address,
   allowedFromAddresses: readonly Address[],
-): Promise<CrtvaiTransferObservation> {
+): Promise<Erc20TransferObservation> {
   if (chainReaderOverride !== undefined && chainReaderOverride !== null) {
     try {
-      return await chainReaderOverride.fetchCrtvaiTransfer(
+      return await chainReaderOverride.fetchErc20Transfer(
         txHash,
         minConfirmations,
+        tokenAddress,
         payee,
         allowedFromAddresses,
       );
@@ -194,9 +222,25 @@ export async function fetchCrtvaiTransfer(
       throw new ChainTxUnavailableError();
     }
   }
-  return fetchCrtvaiTransferLive(
+  return fetchErc20TransferLive(
     txHash,
     minConfirmations,
+    tokenAddress,
+    payee,
+    allowedFromAddresses,
+  );
+}
+
+export async function fetchCrtvaiTransfer(
+  txHash: Hash,
+  minConfirmations: number,
+  payee: Address,
+  allowedFromAddresses: readonly Address[],
+): Promise<Erc20TransferObservation> {
+  return fetchErc20Transfer(
+    txHash,
+    minConfirmations,
+    CRTVAI_TOKEN_ADDRESS,
     payee,
     allowedFromAddresses,
   );

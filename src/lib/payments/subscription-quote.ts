@@ -27,7 +27,9 @@ import {
   type SubscriptionQuoteSignFields,
 } from "./subscription-quote-sign";
 import { usdCentsForPlan, usdc6FromUsdCents } from "./subscription-pricing";
+import { resolvePaymentTokenForQuote } from "./payment-token-config";
 import { dearPlatformTreasuryAddress } from "./subscription-config";
+import { usdcSubscriptionAmountUnits } from "./subscription-usdc-pricing";
 import { verifyWriterSplit } from "./writer-split-verify";
 import { getAddress } from "viem";
 
@@ -48,6 +50,9 @@ export type SubscriptionQuoteResponse = {
   curveOutputWei: string;
   minCrtvaiWei: string;
   payee: string;
+  tokenAddress: string;
+  tokenDecimals: number;
+  paymentToken: "usdc" | "crtvai";
   payerAddress: string;
   signerAddress: string;
   slippageBps: number;
@@ -133,6 +138,15 @@ export async function createSubscriptionQuote(
     );
   }
 
+  const paymentToken = resolvePaymentTokenForQuote();
+  if (!paymentToken) {
+    throw new SubscriptionQuoteError(
+      "payment_token_invalid",
+      "PAYMENT_TOKEN must be usdc or crtvai",
+      503,
+    );
+  }
+
   const [writer] = await db
     .select()
     .from(writers)
@@ -178,41 +192,49 @@ export async function createSubscriptionQuote(
   }
 
   const usdCents = usdCentsForPlan(input.plan);
-  const usdc6 = usdc6FromUsdCents(usdCents);
   let curveOutputWei: bigint;
-  try {
-    curveOutputWei =
-      await curveReader.readMeTokensMintedForDeposit(usdc6);
-  } catch (error) {
-    if (error instanceof MeTokenCurveUnavailableError) {
+  let minCrtvaiWei: bigint;
+
+  if (paymentToken.rail === "usdc") {
+    const amount = usdcSubscriptionAmountUnits(input.plan);
+    curveOutputWei = amount;
+    minCrtvaiWei = amount;
+  } else {
+    const usdc6 = usdc6FromUsdCents(usdCents);
+    try {
+      curveOutputWei =
+        await curveReader.readMeTokensMintedForDeposit(usdc6);
+    } catch (error) {
+      if (error instanceof MeTokenCurveUnavailableError) {
+        throw new SubscriptionQuoteError(
+          "curve_unavailable",
+          error.message,
+          503,
+        );
+      }
+      throw error;
+    }
+
+    if (curveOutputWei <= BigInt(0)) {
       throw new SubscriptionQuoteError(
-        "curve_unavailable",
-        error.message,
-        503,
+        "quote_unpayable",
+        "CRTVAI curve returned zero for this subscription price",
+        502,
       );
     }
-    throw error;
-  }
 
-  if (curveOutputWei <= BigInt(0)) {
-    throw new SubscriptionQuoteError(
-      "quote_unpayable",
-      "CRTVAI curve returned zero for this subscription price",
-      502,
+    await assertCurveStability(db, {
+      writerId: input.writerId,
+      plan: input.plan,
+      freshCurveOutputWei: curveOutputWei,
+      nowMs,
+    });
+
+    minCrtvaiWei = applySlippageMinCrtvaiWei(
+      curveOutputWei,
+      SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     );
   }
-
-  await assertCurveStability(db, {
-    writerId: input.writerId,
-    plan: input.plan,
-    freshCurveOutputWei: curveOutputWei,
-    nowMs,
-  });
-
-  const minCrtvaiWei = applySlippageMinCrtvaiWei(
-    curveOutputWei,
-    SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
-  );
 
   const { signer, payer } = resolveSubscriptionPayerAddress(input.signerWallet);
   const payee = writer.payoutSplitAddress.toLowerCase();
@@ -230,6 +252,8 @@ export async function createSubscriptionQuote(
     minCrtvaiWei,
     curveOutputWei,
     payee,
+    tokenAddress: paymentToken.tokenAddress.toLowerCase(),
+    tokenDecimals: paymentToken.decimals,
     expiresAtMs,
     slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
@@ -247,6 +271,8 @@ export async function createSubscriptionQuote(
     minCrtvaiWei: minCrtvaiWei.toString(),
     curveOutputWei: curveOutputWei.toString(),
     payee,
+    tokenAddress: paymentToken.tokenAddress.toLowerCase(),
+    tokenDecimals: paymentToken.decimals,
     expiresAt: new Date(expiresAtMs),
     signature,
   });
@@ -261,6 +287,9 @@ export async function createSubscriptionQuote(
     curveOutputWei: curveOutputWei.toString(),
     minCrtvaiWei: minCrtvaiWei.toString(),
     payee,
+    tokenAddress: paymentToken.tokenAddress,
+    tokenDecimals: paymentToken.decimals,
+    paymentToken: paymentToken.rail,
     payerAddress: payer,
     signerAddress: signer,
     slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,

@@ -100,6 +100,8 @@ async function seedQuote(options?: {
     minCrtvaiWei,
     curveOutputWei: minCrtvaiWei + BigInt(1000),
     payee: PAYEE_SPLIT.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: 18,
     expiresAtMs: expiresAt.getTime(),
     slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,
@@ -117,6 +119,8 @@ async function seedQuote(options?: {
     minCrtvaiWei: minCrtvaiWei.toString(),
     curveOutputWei: signFields.curveOutputWei.toString(),
     payee: PAYEE_SPLIT.toLowerCase(),
+    tokenAddress: CRTVAI_TOKEN_ADDRESS.toLowerCase(),
+    tokenDecimals: 18,
     expiresAt,
     signature,
   });
@@ -136,16 +140,16 @@ function mockTransfer(
   );
 
   setChainTxReaderForTests({
-    fetchCrtvaiTransfer: vi
+    fetchErc20Transfer: vi
       .fn()
-      .mockImplementation(async (_hash, _conf, payee) => ({
+      .mockImplementation(async (_hash, _conf, token, payee) => ({
         from: SIGNER,
         to: payee,
         value: MIN_CRTVAI,
         blockNumber: BigInt(100),
         blockTimestampSec,
         confirmations: subscriptionMinConfirmations(),
-        logEmitter: CRTVAI_TOKEN_ADDRESS,
+        logEmitter: overrides.logEmitter ?? token,
         ...overrides,
       })),
   });
@@ -169,6 +173,7 @@ describe("POST /api/subscriptions/verify", () => {
     testDb = await createTestDb();
     vi.stubEnv("QUOTE_SIGNING_SECRET", QUOTE_SIGNING_SECRET);
     vi.stubEnv("DEAR_PLATFORM_TREASURY_ADDRESS", TREASURY);
+    vi.stubEnv("PAYMENT_TOKEN", "crtvai");
     setFlag(true);
     setPaymentsLinkedWalletResolverForTests(async () => ({
       privyUserId: "did:privy:test-user",
@@ -221,7 +226,7 @@ describe("POST /api/subscriptions/verify", () => {
   it("returns 503 when chain reader is unavailable", async () => {
     const { quoteId } = await seedQuote();
     setChainTxReaderForTests({
-      fetchCrtvaiTransfer: vi
+      fetchErc20Transfer: vi
         .fn()
         .mockRejectedValue(new ChainTxUnavailableError()),
     });
@@ -291,7 +296,7 @@ describe("POST /api/subscriptions/verify", () => {
   it("rejects insufficient confirmations", async () => {
     const { quoteId } = await seedQuote();
     setChainTxReaderForTests({
-      fetchCrtvaiTransfer: vi
+      fetchErc20Transfer: vi
         .fn()
         .mockRejectedValue(new Error("insufficient_confirmations")),
     });

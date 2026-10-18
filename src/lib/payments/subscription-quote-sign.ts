@@ -14,6 +14,8 @@ export type SubscriptionQuoteSignFields = {
   minCrtvaiWei: bigint;
   curveOutputWei: bigint;
   payee: string;
+  tokenAddress: string;
+  tokenDecimals: number;
   expiresAtMs: number;
   slippageBps: number;
   chainId: number;
@@ -35,6 +37,8 @@ export type StoredSubscriptionQuoteRow = {
   minCrtvaiWei: string;
   curveOutputWei: string;
   payee: string;
+  tokenAddress: string;
+  tokenDecimals: number;
   expiresAt: Date;
   signature: string;
 };
@@ -65,6 +69,8 @@ function buildPayload(fields: SubscriptionQuoteSignFields): string {
     fields.minCrtvaiWei.toString(),
     fields.curveOutputWei.toString(),
     fields.payee.toLowerCase(),
+    fields.tokenAddress.toLowerCase(),
+    String(fields.tokenDecimals),
     String(fields.expiresAtMs),
     String(fields.slippageBps),
     String(fields.chainId),
@@ -84,6 +90,8 @@ export function signFieldsFromStoredQuote(
     minCrtvaiWei: BigInt(row.minCrtvaiWei),
     curveOutputWei: BigInt(row.curveOutputWei),
     payee: row.payee,
+    tokenAddress: row.tokenAddress,
+    tokenDecimals: row.tokenDecimals,
     expiresAtMs: row.expiresAt.getTime(),
     slippageBps: SUBSCRIPTION_QUOTE_SLIPPAGE_BPS,
     chainId: BASE_CHAIN_ID,

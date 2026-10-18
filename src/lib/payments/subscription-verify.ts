@@ -7,11 +7,10 @@ import {
   subscriptions,
   writers,
 } from "@/db/schema";
-import { CRTVAI_TOKEN_ADDRESS } from "./metoken-curve-config";
 import { dearPlatformTreasuryAddress } from "./subscription-config";
 import {
   ChainTxUnavailableError,
-  fetchCrtvaiTransfer,
+  fetchErc20Transfer,
 } from "./subscription-chain-read";
 import {
   quoteSettlementDeadlineMs,
@@ -132,6 +131,8 @@ export async function verifySubscriptionPayment(
     minCrtvaiWei: quoteRow.minCrtvaiWei,
     curveOutputWei: quoteRow.curveOutputWei,
     payee: quoteRow.payee,
+    tokenAddress: quoteRow.tokenAddress,
+    tokenDecimals: quoteRow.tokenDecimals,
     expiresAt: quoteRow.expiresAt,
     signature: quoteRow.signature,
   };
@@ -197,16 +198,18 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  const minCrtvaiWei = BigInt(quote.minCrtvaiWei);
+  const minPaymentUnits = BigInt(quote.minCrtvaiWei);
+  const quotedTokenAddress = getAddress(quote.tokenAddress);
   const { payer, signer } = resolveSubscriptionPayerAddress(
     quote.wallet as `0x${string}`,
   );
 
   let transfer;
   try {
-    transfer = await fetchCrtvaiTransfer(
+    transfer = await fetchErc20Transfer(
       txHash,
       subscriptionMinConfirmations(),
+      quotedTokenAddress,
       payeeAddress,
       [payer, signer],
     );
@@ -226,10 +229,13 @@ export async function verifySubscriptionPayment(
         409,
       );
     }
-    if (message === "crtvai_transfer_missing") {
+    if (
+      message === "token_transfer_missing" ||
+      message === "crtvai_transfer_missing"
+    ) {
       throw new SubscriptionVerifyError(
-        "crtvai_transfer_missing",
-        "Transaction must include a CRTVAI Transfer log",
+        "token_transfer_missing",
+        "Transaction must include a Transfer log for the quoted payment token",
         400,
       );
     }
@@ -247,12 +253,10 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  if (
-    transfer.logEmitter.toLowerCase() !== CRTVAI_TOKEN_ADDRESS.toLowerCase()
-  ) {
+  if (getAddress(transfer.logEmitter) !== quotedTokenAddress) {
     throw new SubscriptionVerifyError(
       "wrong_token_emitter",
-      "Transfer log must be emitted by CRTVAI token contract",
+      "Transfer log must be emitted by the quoted payment token contract",
       400,
     );
   }
@@ -269,7 +273,7 @@ export async function verifySubscriptionPayment(
   if (getAddress(transfer.to) !== payeeAddress) {
     throw new SubscriptionVerifyError(
       "wrong_recipient",
-      "CRTVAI must be sent to the writer split contract",
+      "Payment token must be sent to the writer split contract",
       400,
     );
   }
@@ -283,7 +287,7 @@ export async function verifySubscriptionPayment(
     );
   }
 
-  if (transfer.value < minCrtvaiWei) {
+  if (transfer.value < minPaymentUnits) {
     throw new SubscriptionVerifyError(
       "underpaid",
       "Transfer amount is below the quoted minimum",
@@ -308,6 +312,8 @@ export async function verifySubscriptionPayment(
         writerWei: writerWei.toString(),
         platformWei: platformWei.toString(),
         splitAddress: payeeAddress.toLowerCase(),
+        tokenAddress: quotedTokenAddress.toLowerCase(),
+        tokenDecimals: quote.tokenDecimals,
         payoutStatus: "recorded",
       })
       .onConflictDoNothing();

@@ -109,6 +109,6 @@ describe("extractCrtvaiTransferFromReceipt", () => {
         PAYEE,
         [PAYER],
       ),
-    ).toThrow("crtvai_transfer_missing");
+    ).toThrow("token_transfer_missing");
   });
 });
