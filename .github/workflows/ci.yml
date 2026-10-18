@@ -19,3 +19,9 @@ jobs:
       - run: npm run lint
       - run: npm run test
       - run: npm run build
+      - name: Adam ADK service
+        working-directory: services/adam
+        run: |
+          npm ci
+          npm test
+          npm run build
