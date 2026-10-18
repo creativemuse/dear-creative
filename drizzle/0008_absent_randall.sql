@@ -6,6 +6,8 @@ CREATE TABLE `payment_ledger` (
 	`writer_wei` text NOT NULL,
 	`platform_wei` text NOT NULL,
 	`split_address` text NOT NULL,
+	`token_address` text NOT NULL,
+	`token_decimals` integer NOT NULL,
 	`payout_status` text DEFAULT 'recorded' NOT NULL,
 	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
 	FOREIGN KEY (`quote_id`) REFERENCES `subscription_quotes`(`id`) ON UPDATE no action ON DELETE no action

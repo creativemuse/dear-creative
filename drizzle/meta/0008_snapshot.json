@@ -456,6 +456,20 @@
           "notNull": true,
           "autoincrement": false
         },
+        "token_address": {
+          "name": "token_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_decimals": {
+          "name": "token_decimals",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "payout_status": {
           "name": "payout_status",
           "type": "text",
@@ -875,15 +889,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "min_crtvai_wei": {
-          "name": "min_crtvai_wei",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "curve_output_wei": {
-          "name": "curve_output_wei",
+        "min_amount_raw": {
+          "name": "min_amount_raw",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -892,6 +899,20 @@
         "payee": {
           "name": "payee",
           "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_address": {
+          "name": "token_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_decimals": {
+          "name": "token_decimals",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -1180,6 +1201,13 @@
         },
         "payout_split_address": {
           "name": "payout_split_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "payout_wallet_address": {
+          "name": "payout_wallet_address",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
