@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildExistingPostIndex,
   buildImportCandidates,
-  countFeedArchiveMatches,
   decodeXmlEntitiesOnce,
   fetchArticleBodyHtml,
   mergeArchiveListingEntries,
@@ -13,8 +12,13 @@ import {
   resolveExistingPost,
   runArchiveImportDryRun,
   slugFromCanonicalUrl,
+  type FetchLike,
 } from "./lib";
 import { stripCdata } from "./xml-utils";
+
+function mockTextResponse(body: string, init: ResponseInit = {}): Response {
+  return new Response(body, { status: 200, ...init });
+}
 
 const sampleRss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
@@ -176,7 +180,9 @@ describe("planPostArchiveUpserts", () => {
 
 describe("fetchArticleBodyHtml", () => {
   it("throws on non-200 article fetch", async () => {
-    const fetchFn = vi.fn(async () => ({ ok: false, status: 404, text: async () => "" }));
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      new Response("", { status: 404 }),
+    );
     await expect(
       fetchArticleBodyHtml("https://news.creativeplatform.xyz/posts/missing", fetchFn),
     ).rejects.toThrow(/Article fetch failed \(404\)/);
@@ -185,21 +191,19 @@ describe("fetchArticleBodyHtml", () => {
 
 describe("runArchiveImportDryRun", () => {
   it("uses injected fetch and reports counts", async () => {
-    const fetchFn = vi.fn(async (url: string) => {
+    const fetchFn = vi.fn<FetchLike>(async (url: string) => {
       if (url.endsWith("/rss.xml")) {
-        return { ok: true, text: async () => sampleRss };
+        return mockTextResponse(sampleRss);
       }
       if (url.endsWith("/archive") || url.endsWith("/")) {
-        return { ok: true, text: async () => sampleListing };
+        return mockTextResponse(sampleListing);
       }
       if (url.includes("/posts/")) {
-        return {
-          ok: true,
-          text: async () =>
-            '<div class="post-body"><p>Article</p></div><div class="post-cta">',
-        };
+        return mockTextResponse(
+          '<div class="post-body"><p>Article</p></div><div class="post-cta">',
+        );
       }
-      return { ok: false, status: 500, text: async () => "" };
+      return new Response("", { status: 500 });
     });
 
     const summary = await runArchiveImportDryRun({
@@ -215,11 +219,11 @@ describe("runArchiveImportDryRun", () => {
   });
 
   it("propagates fetch failures for listing pages", async () => {
-    const fetchFn = vi.fn(async (url: string) => {
+    const fetchFn = vi.fn<FetchLike>(async (url: string) => {
       if (url.endsWith("/rss.xml")) {
-        return { ok: true, text: async () => sampleRss };
+        return mockTextResponse(sampleRss);
       }
-      return { ok: false, status: 503, text: async () => "" };
+      return new Response("", { status: 503 });
     });
     await expect(
       runArchiveImportDryRun({
