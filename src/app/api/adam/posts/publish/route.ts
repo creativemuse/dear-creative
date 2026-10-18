@@ -1,3 +1,4 @@
+import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db/client";
 import {
@@ -48,6 +49,10 @@ export async function POST(request: Request) {
       sponsorId: body.sponsorId,
       dryRun: body.dryRun,
     });
+
+    if (!result.dryRun) {
+      revalidateTag("posts-recent", "max");
+    }
 
     return NextResponse.json(result);
   } catch (error) {

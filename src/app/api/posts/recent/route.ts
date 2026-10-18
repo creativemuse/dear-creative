@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { buildRecentPosts } from "@/lib/posts/recent-feed";
 
 const getCachedRecentPosts = unstable_cache(
-  async (limit: number) => buildRecentPosts(limit),
+  async (limit: number) => await buildRecentPosts(limit),
   ["api-posts-recent"],
   { revalidate: 300, tags: ["posts-recent"] },
 );

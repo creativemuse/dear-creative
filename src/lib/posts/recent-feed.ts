@@ -1,4 +1,6 @@
-import { listContentPosts } from "./get-post";
+import { getDb } from "@/db/client";
+import { listRecentPublishedPosts } from "./published-posts";
+import { resolvePostPublicUrl } from "./post-public-url";
 import type { RecentPost } from "./types";
 
 export function getPublicSiteOrigin(): string {
@@ -9,16 +11,14 @@ export function getPublicSiteOrigin(): string {
   ).replace(/\/$/, "");
 }
 
-export function buildRecentPosts(limit = 6): RecentPost[] {
-  const origin = getPublicSiteOrigin();
-  return listContentPosts()
-    .sort(
-      (a, b) =>
-        new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
-    )
-    .slice(0, limit)
-    .map((post) => ({
-      ...post,
-      canonicalUrl: `${origin}/posts/${post.slug}`,
-    }));
+export async function buildRecentPosts(limit = 6): Promise<RecentPost[]> {
+  const rows = await listRecentPublishedPosts(getDb(), limit);
+  return rows.map((post) => ({
+    slug: post.slug,
+    title: post.title,
+    publishedAt: post.publishedAt,
+    excerpt: post.excerpt,
+    coverImage: post.coverImage,
+    canonicalUrl: resolvePostPublicUrl(post),
+  }));
 }
