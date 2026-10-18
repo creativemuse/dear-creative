@@ -21,7 +21,16 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test
-      - run: npm run build
+      - name: Build with local database
+        env:
+          LOCAL_DATABASE_URL: file:./data/ci-dear-creative.db
+        run: |
+          npm run db:migrate:local
+          npx next build
+      - name: Build without database env or local DB file
+        run: |
+          rm -f data/dear-creative.db data/ci-dear-creative.db
+          env -u TURSO_DATABASE_URL -u TURSO_AUTH_TOKEN -u LOCAL_DATABASE_URL npx next build
       - name: Adam ADK service
         working-directory: services/adam
         run: |

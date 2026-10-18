@@ -1,14 +1,9 @@
-import { unstable_cache } from "next/cache";
+import { connection } from "next/server";
 import { NextResponse } from "next/server";
-import { buildRecentPosts } from "@/lib/posts/recent-feed";
-
-const getCachedRecentPosts = unstable_cache(
-  async (limit: number) => await buildRecentPosts(limit),
-  ["api-posts-recent"],
-  { revalidate: 300, tags: ["posts-recent"] },
-);
+import { getCachedRecentPosts } from "@/lib/posts/cached-recent-posts";
 
 export async function GET(request: Request) {
+  await connection();
   const { searchParams } = new URL(request.url);
   const rawLimit = Number.parseInt(searchParams.get("limit") ?? "6", 10);
   const limit = Number.isFinite(rawLimit)

@@ -10,6 +10,14 @@ vi.mock("next/cache", () => ({
   cacheLife: () => undefined,
 }));
 
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return {
+    ...actual,
+    connection: async () => undefined,
+  };
+});
+
 const { getDb } = vi.hoisted(() => ({
   getDb: vi.fn(),
 }));

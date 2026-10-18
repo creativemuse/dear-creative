@@ -1,4 +1,5 @@
 import { cacheLife, cacheTag } from "next/cache";
+import { connection } from "next/server";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db/client";
 import { buildRssXml } from "@/lib/posts/rss-feed";
@@ -17,6 +18,7 @@ async function loadRssPosts() {
 }
 
 export async function GET() {
+  await connection();
   const origin = getPublicSiteOrigin();
   const items = await loadRssPosts();
   const xml = buildRssXml(

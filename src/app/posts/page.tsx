@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { getCachedPublishedPostsPage } from "@/lib/posts/published-posts-cache";
 
@@ -7,6 +8,7 @@ type PageProps = {
 };
 
 async function PostsList({ searchParams }: PageProps) {
+  await connection();
   const { page: rawPage } = await searchParams;
   const parsed = Number.parseInt(rawPage ?? "1", 10);
   const page = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;

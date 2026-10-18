@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { getCachedPublishedPostBySlug } from "@/lib/posts/published-posts-cache";
 import { publishedPostBodyForDisplay } from "@/lib/posts/published-post-render";
@@ -10,6 +11,7 @@ type PageProps = {
 };
 
 async function PostArticle({ params }: PageProps) {
+  await connection();
   const { slug } = await params;
   const post = await getCachedPublishedPostBySlug(slug);
   if (!post) {
@@ -46,6 +48,7 @@ async function PostArticle({ params }: PageProps) {
 }
 
 export async function generateMetadata({ params }: PageProps) {
+  await connection();
   const { slug } = await params;
   const post = await getCachedPublishedPostBySlug(slug);
   if (!post) {
