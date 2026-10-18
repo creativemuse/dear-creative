@@ -1,3 +1,5 @@
+import { getTableColumns } from "drizzle-orm";
+import { posts } from "@/db/schema";
 import type { PostSource } from "@/db/schema";
 
 /** Row shape for idempotent upsert into `posts`. */
@@ -18,6 +20,22 @@ export type PostsSchemaReadiness = {
   missing: string[];
 };
 
+const REQUIRED_POST_COLUMNS = [
+  "bodyHtml",
+  "canonicalUrl",
+  "sourceGuid",
+  "source",
+  "publishedAt",
+] as const;
+
+/** Validates Drizzle schema includes columns from migration #19 / 0006. */
 export function assessPostsArchiveSchemaReadiness(): PostsSchemaReadiness {
-  return { ready: true, missing: [] };
+  const columns = getTableColumns(posts);
+  const missing: string[] = [];
+  for (const name of REQUIRED_POST_COLUMNS) {
+    if (!(name in columns)) {
+      missing.push(`posts.${name}`);
+    }
+  }
+  return { ready: missing.length === 0, missing };
 }

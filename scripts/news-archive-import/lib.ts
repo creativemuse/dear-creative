@@ -1,4 +1,6 @@
 import type { PostArchiveUpsertRow } from "./schema";
+import { extractPostBodyHtmlFromPage } from "./post-body.js";
+import { decodeXmlEntitiesOnce, readTagInner } from "./xml-utils.js";
 
 export const DEFAULT_NEWS_ORIGIN = "https://news.creativeplatform.xyz";
 export const DEFAULT_RSS_URL = `${DEFAULT_NEWS_ORIGIN}/rss.xml`;
@@ -11,6 +13,7 @@ export type ParsedFeedItem = {
   slug: string;
   title: string;
   description: string | null;
+  contentEncoded: string | null;
   publishedAt: Date | null;
 };
 
@@ -27,36 +30,34 @@ export type ArchiveImportSummary = {
   homeIndexItems: number;
   archivePageItems: number;
   archiveItems: number;
+  importItems: number;
   matches: number;
   wouldInsert: number;
   wouldUpdate: number;
   wouldSkip: number;
+  wouldSlugConflict: number;
+  wouldIdentityConflict: number;
   feedOnly: number;
   archiveOnly: number;
   schemaReady: boolean;
   schemaMissing: string[];
 };
 
+export type ExistingPostIndex = {
+  byGuid: Map<string, PostArchiveUpsertRow>;
+  byCanonical: Map<string, PostArchiveUpsertRow>;
+  bySlug: Map<string, PostArchiveUpsertRow>;
+};
+
+export type PlanPostArchiveResult = {
+  wouldInsert: number;
+  wouldUpdate: number;
+  wouldSkip: number;
+  wouldSlugConflict: number;
+  wouldIdentityConflict: number;
+};
+
 export type FetchLike = (url: string) => Promise<Response>;
-
-function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, code: string) =>
-      String.fromCharCode(Number(code)),
-    );
-}
-
-function readTag(block: string, tag: string): string | null {
-  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "i");
-  const match = block.match(re);
-  if (!match?.[1]) return null;
-  return decodeXmlEntities(match[1].trim());
-}
 
 export function normalizeCanonicalUrl(
   url: string,
@@ -88,6 +89,22 @@ export function slugFromCanonicalUrl(canonicalUrl: string): string {
   throw new Error(`Cannot derive slug from URL: ${canonicalUrl}`);
 }
 
+function parseRssDate(raw: string, itemLabel: string): Date {
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid pubDate for RSS item ${itemLabel}: ${raw}`);
+  }
+  return date;
+}
+
+function parseListingDate(raw: string, itemLabel: string): Date {
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid datetime on listing ${itemLabel}: ${raw}`);
+  }
+  return date;
+}
+
 export function parseRssItems(
   xml: string,
   siteOrigin = DEFAULT_NEWS_ORIGIN,
@@ -96,29 +113,40 @@ export function parseRssItems(
   const itemBlocks = xml.match(/<item\b[\s\S]*?<\/item>/gi) ?? [];
 
   for (const block of itemBlocks) {
-    const title = readTag(block, "title");
-    const link = readTag(block, "link");
-    const guidRaw = readTag(block, "guid");
-    const description = readTag(block, "description");
-    const pubDateRaw = readTag(block, "pubDate");
+    const title = readTagInner(block, "title");
+    const link = readTagInner(block, "link");
+    const guidRaw = readTagInner(block, "guid");
+    const description = readTagInner(block, "description");
+    const contentEncoded =
+      readTagInner(block, "content:encoded") ??
+      block.match(/<content:encoded[^>]*>([\s\S]*?)<\/content:encoded>/i)?.[1]
+        ? decodeXmlEntitiesOnce(
+            block
+              .match(/<content:encoded[^>]*>([\s\S]*?)<\/content:encoded>/i)![1]!
+              .trim(),
+          )
+        : null;
+    const pubDateRaw = readTagInner(block, "pubDate");
 
     if (!title || !link) {
       continue;
     }
 
     const canonicalUrl = normalizeCanonicalUrl(link, siteOrigin);
+    const slug = slugFromCanonicalUrl(canonicalUrl);
     const guid = normalizeCanonicalUrl(guidRaw ?? link, siteOrigin);
-    const publishedAt = pubDateRaw ? new Date(pubDateRaw) : null;
-    if (publishedAt && Number.isNaN(publishedAt.getTime())) {
-      throw new Error(`Invalid pubDate in RSS item: ${pubDateRaw}`);
-    }
+    const itemLabel = `"${title}" (${slug})`;
+    const publishedAt = pubDateRaw
+      ? parseRssDate(pubDateRaw, itemLabel)
+      : null;
 
     items.push({
       guid,
       canonicalUrl,
-      slug: slugFromCanonicalUrl(canonicalUrl),
+      slug,
       title,
       description: description ?? null,
+      contentEncoded,
       publishedAt,
     });
   }
@@ -143,12 +171,11 @@ export function parsePostListingPage(
       /<time\b[^>]*\bdatetime="([^"]+)"/i,
     );
     const title = titleMatch?.[1]
-      ? decodeXmlEntities(titleMatch[1].replace(/<[^>]+>/g, "").trim())
+      ? decodeXmlEntitiesOnce(titleMatch[1].replace(/<[^>]+>/g, "").trim())
       : null;
-    const publishedAt = timeMatch?.[1] ? new Date(timeMatch[1]) : null;
-    if (publishedAt && Number.isNaN(publishedAt.getTime())) {
-      throw new Error(`Invalid datetime on listing link ${path}`);
-    }
+    const publishedAt = timeMatch?.[1]
+      ? parseListingDate(timeMatch[1], path)
+      : null;
 
     const canonicalUrl = normalizeCanonicalUrl(path, siteOrigin);
     const slug = slugFromCanonicalUrl(canonicalUrl);
@@ -175,11 +202,58 @@ export function mergeArchiveListingEntries(
   return [...bySlug.values()];
 }
 
-function postArchiveKey(row: {
+export function buildImportCandidates(
+  feed: ParsedFeedItem[],
+  listing: IndexEntry[],
+): Array<{
+  slug: string;
   sourceGuid: string;
   canonicalUrl: string;
-}): string {
-  return row.sourceGuid || row.canonicalUrl;
+  title: string;
+  teaserText: string | null;
+  contentEncoded: string | null;
+  publishedAt: Date | null;
+}> {
+  const feedBySlug = new Map(feed.map((item) => [item.slug, item]));
+  const listingSlugs = new Set(listing.map((entry) => entry.slug));
+  const candidates: Array<{
+    slug: string;
+    sourceGuid: string;
+    canonicalUrl: string;
+    title: string;
+    teaserText: string | null;
+    contentEncoded: string | null;
+    publishedAt: Date | null;
+  }> = [];
+
+  for (const entry of listing) {
+    const feedItem = feedBySlug.get(entry.slug);
+    candidates.push({
+      slug: entry.slug,
+      sourceGuid: feedItem?.guid ?? entry.canonicalUrl,
+      canonicalUrl: feedItem?.canonicalUrl ?? entry.canonicalUrl,
+      title: entry.title ?? feedItem?.title ?? entry.slug,
+      teaserText: feedItem?.description ?? null,
+      contentEncoded: feedItem?.contentEncoded ?? null,
+      publishedAt: entry.publishedAt ?? feedItem?.publishedAt ?? null,
+    });
+  }
+
+  for (const item of feed) {
+    if (!listingSlugs.has(item.slug)) {
+      candidates.push({
+        slug: item.slug,
+        sourceGuid: item.guid,
+        canonicalUrl: item.canonicalUrl,
+        title: item.title,
+        teaserText: item.description,
+        contentEncoded: item.contentEncoded,
+        publishedAt: item.publishedAt,
+      });
+    }
+  }
+
+  return candidates;
 }
 
 function samePostArchive(
@@ -198,54 +272,64 @@ function samePostArchive(
   );
 }
 
-export function feedItemsToPostRows(
-  feed: ParsedFeedItem[],
-  listing: IndexEntry[],
-): PostArchiveUpsertRow[] {
-  const listingBySlug = new Map(listing.map((entry) => [entry.slug, entry]));
-
-  return feed.map((item) => {
-    const listingEntry = listingBySlug.get(item.slug);
-    return {
-      sourceGuid: item.guid,
-      canonicalUrl: item.canonicalUrl,
-      slug: item.slug,
-      title: listingEntry?.title ?? item.title,
-      teaserText: item.description,
-      bodyHtml: null,
-      publishedAt: listingEntry?.publishedAt ?? item.publishedAt,
-      source: "paragraph",
-      status: "published",
-    };
-  });
+export function resolveExistingPost(
+  row: PostArchiveUpsertRow,
+  index: ExistingPostIndex,
+): { existing?: PostArchiveUpsertRow; identityConflict: boolean } {
+  const byGuid = index.byGuid.get(row.sourceGuid);
+  const byCanonical = index.byCanonical.get(row.canonicalUrl);
+  if (byGuid && byCanonical && byGuid !== byCanonical) {
+    return { identityConflict: true };
+  }
+  return { existing: byGuid ?? byCanonical, identityConflict: false };
 }
 
 export function planPostArchiveUpserts(
   rows: PostArchiveUpsertRow[],
-  existingByKey: Map<string, PostArchiveUpsertRow>,
-): Pick<
-  ArchiveImportSummary,
-  "wouldInsert" | "wouldUpdate" | "wouldSkip"
-> {
+  index: ExistingPostIndex,
+): PlanPostArchiveResult {
   let wouldInsert = 0;
   let wouldUpdate = 0;
   let wouldSkip = 0;
+  let wouldSlugConflict = 0;
+  let wouldIdentityConflict = 0;
 
   for (const row of rows) {
-    const key = postArchiveKey(row);
-    const existing = existingByKey.get(key);
-    if (!existing) {
+    const resolved = resolveExistingPost(row, index);
+    if (resolved.identityConflict) {
+      wouldIdentityConflict += 1;
+      continue;
+    }
+
+    const slugHolder = index.bySlug.get(row.slug);
+    if (
+      slugHolder &&
+      slugHolder !== resolved.existing &&
+      (slugHolder.canonicalUrl !== row.canonicalUrl ||
+        slugHolder.sourceGuid !== row.sourceGuid)
+    ) {
+      wouldSlugConflict += 1;
+      continue;
+    }
+
+    if (!resolved.existing) {
       wouldInsert += 1;
       continue;
     }
-    if (samePostArchive(existing, row)) {
+    if (samePostArchive(resolved.existing, row)) {
       wouldSkip += 1;
     } else {
       wouldUpdate += 1;
     }
   }
 
-  return { wouldInsert, wouldUpdate, wouldSkip };
+  return {
+    wouldInsert,
+    wouldUpdate,
+    wouldSkip,
+    wouldSlugConflict,
+    wouldIdentityConflict,
+  };
 }
 
 export function countFeedArchiveMatches(
@@ -275,15 +359,80 @@ export function countFeedArchiveMatches(
   return { matches, feedOnly, archiveOnly };
 }
 
+export async function fetchArticleBodyHtml(
+  canonicalUrl: string,
+  fetchFn: FetchLike,
+  prefetchedHtml?: string,
+): Promise<string | null> {
+  const html =
+    prefetchedHtml ??
+    (await (async () => {
+      const response = await fetchFn(canonicalUrl);
+      if (!response.ok) {
+        throw new Error(
+          `Article fetch failed (${response.status}): ${canonicalUrl}`,
+        );
+      }
+      return response.text();
+    })());
+  const fromEncoded = extractPostBodyHtmlFromPage(html);
+  return fromEncoded;
+}
+
+export async function candidatesToPostRows(
+  candidates: ReturnType<typeof buildImportCandidates>,
+  fetchFn: FetchLike,
+  options: { fetchBodies: boolean },
+): Promise<PostArchiveUpsertRow[]> {
+  const rows: PostArchiveUpsertRow[] = [];
+  for (const candidate of candidates) {
+    let bodyHtml: string | null = candidate.contentEncoded;
+    if (options.fetchBodies) {
+      const pageBody = await fetchArticleBodyHtml(
+        candidate.canonicalUrl,
+        fetchFn,
+      );
+      bodyHtml = pageBody ?? bodyHtml;
+    }
+    rows.push({
+      sourceGuid: candidate.sourceGuid,
+      canonicalUrl: candidate.canonicalUrl,
+      slug: candidate.slug,
+      title: candidate.title,
+      teaserText: candidate.teaserText,
+      bodyHtml,
+      publishedAt: candidate.publishedAt,
+      source: "paragraph",
+      status: "published",
+    });
+  }
+  return rows;
+}
+
+export function buildExistingPostIndex(
+  rows: PostArchiveUpsertRow[],
+): ExistingPostIndex {
+  const byGuid = new Map<string, PostArchiveUpsertRow>();
+  const byCanonical = new Map<string, PostArchiveUpsertRow>();
+  const bySlug = new Map<string, PostArchiveUpsertRow>();
+  for (const row of rows) {
+    byGuid.set(row.sourceGuid, row);
+    byCanonical.set(row.canonicalUrl, row);
+    bySlug.set(row.slug, row);
+  }
+  return { byGuid, byCanonical, bySlug };
+}
+
 export async function runArchiveImportDryRun(input: {
   fetch?: FetchLike;
   rssUrl?: string;
   indexUrl?: string;
   archiveUrl?: string;
   siteOrigin?: string;
-  existingByKey?: Map<string, PostArchiveUpsertRow>;
+  existing?: ExistingPostIndex;
   schemaReady: boolean;
   schemaMissing: string[];
+  fetchBodies?: boolean;
 }): Promise<ArchiveImportSummary> {
   const fetchFn = input.fetch ?? globalThis.fetch.bind(globalThis);
   const rssUrl = input.rssUrl ?? DEFAULT_RSS_URL;
@@ -320,25 +469,33 @@ export async function runArchiveImportDryRun(input: {
     feed,
     listing,
   );
-  const postRows = feedItemsToPostRows(feed, listing);
-  const existing = input.existingByKey ?? new Map<string, PostArchiveUpsertRow>();
-  const { wouldInsert, wouldUpdate, wouldSkip } = planPostArchiveUpserts(
-    postRows,
-    existing,
-  );
+  const candidates = buildImportCandidates(feed, listing);
+  const postRows = await candidatesToPostRows(candidates, fetchFn, {
+    fetchBodies: input.fetchBodies ?? true,
+  });
+  const existing =
+    input.existing ??
+    buildExistingPostIndex([]);
+  const plan = planPostArchiveUpserts(postRows, existing);
 
   return {
     feedItems: feed.length,
     homeIndexItems: homeIndex.length,
     archivePageItems: archivePage.length,
     archiveItems: listing.length,
+    importItems: postRows.length,
     matches,
-    wouldInsert,
-    wouldUpdate,
-    wouldSkip,
+    wouldInsert: plan.wouldInsert,
+    wouldUpdate: plan.wouldUpdate,
+    wouldSkip: plan.wouldSkip,
+    wouldSlugConflict: plan.wouldSlugConflict,
+    wouldIdentityConflict: plan.wouldIdentityConflict,
     feedOnly,
     archiveOnly,
     schemaReady: input.schemaReady,
     schemaMissing: input.schemaMissing,
   };
 }
+
+// Re-export for tests
+export { decodeXmlEntitiesOnce, readTagInner } from "./xml-utils.js";
