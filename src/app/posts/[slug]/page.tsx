@@ -2,6 +2,8 @@ import { publishedPostBodyForDisplay } from "@/lib/posts/published-post-render";
 import type { PublishedPostDetail } from "@/lib/posts/published-posts";
 import { requirePublishedPostBySlug } from "@/lib/posts/require-published-post";
 
+export const instant = false;
+
 type PageProps = {
   params: Promise<{ slug: string }>;
 };
