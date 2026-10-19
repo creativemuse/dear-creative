@@ -36,7 +36,10 @@ describe("requestSubscription", () => {
 
   it("creates pending and sends confirmation", async () => {
     const db = await createTestDb();
-    const send = vi.fn(async (_payload: ResendSendPayload) => ({ id: "1" }));
+    const send = vi.fn(async (_payload: ResendSendPayload) => {
+      void _payload;
+      return { id: "1" };
+    });
 
     const summary = await requestSubscription("new@example.test", {
       db,
@@ -60,7 +63,10 @@ describe("requestSubscription", () => {
 
   it("uses configured public site URL in confirm links only", async () => {
     const db = await createTestDb();
-    const send = vi.fn(async (_payload: ResendSendPayload) => ({ id: "1" }));
+    const send = vi.fn(async (_payload: ResendSendPayload) => {
+      void _payload;
+      return { id: "1" };
+    });
 
     await requestSubscription("link@example.test", {
       db,

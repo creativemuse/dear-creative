@@ -54,7 +54,9 @@ function isAllowedHref(href: string): boolean {
   return (
     lower.startsWith("http://") ||
     lower.startsWith("https://") ||
-    lower.startsWith("mailto:")
+    lower.startsWith("mailto:") ||
+    lower.startsWith("/") ||
+    lower.startsWith("#")
   );
 }
 
@@ -72,7 +74,7 @@ export function sanitizeArticleHtml(raw: string): string {
   return sanitizeHtml(raw, {
     allowedTags: [...ALLOWED_TAGS],
     allowedAttributes: {
-      a: ["href", "rel"],
+      a: ["href", "rel", "class"],
       img: ["src", "alt", "loading"],
     },
     allowedSchemes: ["http", "https", "mailto"],
@@ -92,10 +94,16 @@ export function sanitizeArticleHtml(raw: string): string {
     transformTags: {
       a: (tagName, attribs) => {
         const href = normalizeUrlAttribute(attribs.href);
+        const rawClass = (attribs.class ?? "").trim();
+        const safeClass = rawClass
+          .split(/\s+/)
+          .filter((c) => /^[a-zA-Z0-9_-]+$/.test(c))
+          .join(" ");
         return {
           tagName,
           attribs: {
             href,
+            ...(safeClass ? { class: safeClass } : {}),
             rel: "noopener noreferrer nofollow",
           },
         };

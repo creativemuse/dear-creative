@@ -221,5 +221,34 @@ describe("Adam Studio ideas, schedule, multimodal chat, and voice", () => {
     const wavBuffer = pcm16ToWavBuffer(fakePcm, 24000, 1);
     expect(wavBuffer.subarray(0, 4).toString("ascii")).toBe("RIFF");
     expect(wavBuffer.subarray(8, 12).toString("ascii")).toBe("WAVE");
+
+    // Test Gemini 3.8 Flash TTS Interactions format (output_audio WAV)
+    const fakeWavB64 = wavBuffer.toString("base64");
+    const interactionsFetch = vi.fn(async (_url, init) => {
+      const parsedBody = JSON.parse(init?.body as string);
+      expect(parsedBody.model).toBe("gemini-3.8-flash-tts");
+      expect(parsedBody.response_format?.type).toBe("audio");
+      return new Response(
+        JSON.stringify({
+          output_audio: { data: fakeWavB64 },
+          steps: [
+            {
+              type: "model_output",
+              content: [{ type: "audio", data: fakeWavB64 }],
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
+
+    const interactionsResult = await synthesizeSpeechWithGoogle({
+      text: "Testing Gemini 3.8 Flash TTS interactions API.",
+      voiceName: "Kore",
+      fetchFn: interactionsFetch as unknown as typeof fetch,
+    });
+    expect(interactionsResult.audioBase64).toBe(fakeWavB64);
+    expect(interactionsResult.mimeType).toBe("audio/wav");
+    expect(interactionsResult.provider).toBe("gemini-tts");
   });
 });

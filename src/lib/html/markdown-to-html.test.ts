@@ -48,4 +48,25 @@ describe("renderMarkdownToSafeHtml & ensureArticleHtml", () => {
       "<h2>Markdown Heading</h2>\n<p>Paragraph <strong>bold</strong></p>",
     );
   });
+
+  it("converts button:, share:, and subscribe: markdown links to stylized button elements", () => {
+    const md = [
+      "[button: Explore Creative Platform →](https://creativeplatform.xyz)",
+      "[share: Share on X ↗](https://twitter.com/intent/tweet?text=Hello)",
+      "[subscribe: Subscribe to Newsletter →](/#subscribe)",
+    ].join("\n\n");
+
+    const html = renderMarkdownToSafeHtml(md);
+    expect(html).toContain('class="dear-btn"');
+    expect(html).toContain('href="https://creativeplatform.xyz"');
+    expect(html).toContain("Explore Creative Platform →");
+
+    expect(html).toContain('class="dear-btn dear-btn-share"');
+    expect(html).toContain("Share on X ↗");
+
+    expect(html).toContain('class="dear-btn dear-btn-subscribe"');
+    expect(html).toContain('href="/#subscribe"');
+    expect(html).toContain("Subscribe to Newsletter →");
+  });
 });
+

@@ -24,9 +24,27 @@ function formatInlineMarkdown(raw: string): string {
     '<img src="$2" alt="$1" />',
   );
 
-  // Links: [label](https://example.com) or mailto:
+  // Buttons: [button: label](url) or [btn: label](url)
   working = working.replace(
-    /\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)/g,
+    /\[(?:button|btn):\s*([^\]]+)\]\(((?:https?:\/\/|mailto:|\/|#)[^\s)]+)\)/gi,
+    '<a href="$2" class="dear-btn">$1</a>',
+  );
+
+  // Share button: [share: label](url)
+  working = working.replace(
+    /\[share:\s*([^\]]+)\]\(((?:https?:\/\/|mailto:|\/|#)[^\s)]+)\)/gi,
+    '<a href="$2" class="dear-btn dear-btn-share">$1</a>',
+  );
+
+  // Subscribe button: [subscribe: label](url)
+  working = working.replace(
+    /\[subscribe:\s*([^\]]+)\]\(((?:https?:\/\/|mailto:|\/|#)[^\s)]+)\)/gi,
+    '<a href="$2" class="dear-btn dear-btn-subscribe">$1</a>',
+  );
+
+  // Links: [label](https://example.com) or mailto: or relative path /... or #anchor
+  working = working.replace(
+    /\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/|#)[^\s)]+)\)/g,
     '<a href="$2">$1</a>',
   );
 

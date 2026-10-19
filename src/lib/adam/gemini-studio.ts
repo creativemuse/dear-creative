@@ -76,7 +76,7 @@ function getGeminiApiKey(): string | null {
 }
 
 function getGeminiModel(): string {
-  return process.env.ADAM_GEMINI_MODEL?.trim() || "gemini-2.5-flash";
+  return process.env.ADAM_GEMINI_MODEL?.trim() || "gemini-3.8-flash";
 }
 
 export function slugifyTitle(title: string): string {
@@ -770,6 +770,70 @@ export async function transcribeAudioWithGemini(input: {
   return { text: transcript, provider: "gemini-stt" };
 }
 
+function extractAudioFromGeminiResponse(data: unknown): {
+  audioBase64: string;
+  mimeType: string;
+} | null {
+  if (!data || typeof data !== "object") return null;
+  const payload = data as {
+    output_audio?: { data?: string };
+    steps?: Array<{
+      type?: string;
+      content?: Array<{ type?: string; data?: string }>;
+    }>;
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: { mimeType?: string; data?: string };
+        }>;
+      };
+    }>;
+  };
+
+  let rawAudio: string | undefined = payload.output_audio?.data;
+  if (!rawAudio && Array.isArray(payload.steps)) {
+    for (const step of payload.steps) {
+      if (Array.isArray(step.content)) {
+        for (const item of step.content) {
+          if (item.type === "audio" && item.data) {
+            rawAudio = item.data;
+            break;
+          }
+        }
+      }
+      if (rawAudio) break;
+    }
+  }
+
+  if (!rawAudio) {
+    const inline = payload.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+    if (inline?.data) {
+      rawAudio = inline.data;
+    }
+  }
+
+  if (!rawAudio) return null;
+
+  const buf = Buffer.from(rawAudio, "base64");
+  const isWav =
+    buf.length >= 12 &&
+    buf.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buf.subarray(8, 12).toString("ascii") === "WAVE";
+
+  if (isWav) {
+    return {
+      audioBase64: rawAudio,
+      mimeType: "audio/wav",
+    };
+  }
+
+  const wav = pcm16ToWavBuffer(rawAudio, 24000, 1);
+  return {
+    audioBase64: wav.toString("base64"),
+    mimeType: "audio/wav",
+  };
+}
+
 export async function synthesizeSpeechWithGoogle(input: {
   text: string;
   voiceName?: string;
@@ -792,66 +856,94 @@ export async function synthesizeSpeechWithGoogle(input: {
     throw new Error("Text is required for speech synthesis");
   }
 
-  // 1. Try Gemini 2.5 Flash Native Audio TTS first
+  // 1. Try Gemini 3.8 Flash TTS via Interactions API (default)
   const ttsModel =
-    process.env.ADAM_GEMINI_TTS_MODEL?.trim() ||
-    "gemini-2.5-flash-preview-tts";
+    process.env.ADAM_GEMINI_TTS_MODEL?.trim() || "gemini-3.8-flash-tts";
   const voiceName = input.voiceName?.trim() || "Puck";
+
+  const isInteractionsModel =
+    ttsModel.startsWith("gemini-3.8") ||
+    (ttsModel.includes("tts") && !ttsModel.includes("preview"));
+
+  if (isInteractionsModel) {
+    const interactionsUrl = `https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(
+      apiKey,
+    )}`;
+    try {
+      const interactionsRes = await fetchImpl(interactionsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ttsModel,
+          input: [
+            {
+              type: "user_input",
+              content: [{ type: "text", text: cleanText }],
+            },
+          ],
+          response_format: { type: "audio" },
+          generation_config: {
+            speech_config: [{ voice: voiceName }],
+          },
+        }),
+      });
+
+      if (interactionsRes.ok) {
+        const json = await interactionsRes.json();
+        const extracted = extractAudioFromGeminiResponse(json);
+        if (extracted) {
+          return {
+            ...extracted,
+            provider: "gemini-tts",
+          };
+        }
+      }
+    } catch {
+      // Fall through to generateContent
+    }
+  }
+
+  // 2. Try generateContent endpoint (for gemini-2.5-flash-preview-tts or fallback)
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     ttsModel,
   )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-  const geminiRes = await fetchImpl(geminiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: cleanText }],
-        },
-      ],
-      generationConfig: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName,
+  try {
+    const geminiRes = await fetchImpl(geminiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: cleanText }],
+          },
+        ],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName,
+              },
             },
           },
         },
-      },
-    }),
-  });
+      }),
+    });
 
-  if (geminiRes.ok) {
-    const geminiData = (await geminiRes.json()) as {
-      candidates?: Array<{
-        content?: {
-          parts?: Array<{
-            inlineData?: { mimeType?: string; data?: string };
-          }>;
-        };
-      }>;
-    };
-    const inlineData =
-      geminiData.candidates?.[0]?.content?.parts?.[0]?.inlineData;
-    if (inlineData?.data) {
-      const mime = inlineData.mimeType ?? "audio/L16;rate=24000";
-      if (mime.includes("L16") || mime.includes("pcm")) {
-        const wav = pcm16ToWavBuffer(inlineData.data, 24000, 1);
+    if (geminiRes.ok) {
+      const geminiData = await geminiRes.json();
+      const extracted = extractAudioFromGeminiResponse(geminiData);
+      if (extracted) {
         return {
-          audioBase64: wav.toString("base64"),
-          mimeType: "audio/wav",
+          ...extracted,
           provider: "gemini-tts",
         };
       }
-      return {
-        audioBase64: inlineData.data,
-        mimeType: mime,
-        provider: "gemini-tts",
-      };
     }
+  } catch {
+    // Fall through to Cloud TTS
   }
 
   // 2. Fallback to Google Cloud Text-to-Speech v1 REST endpoint

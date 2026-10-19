@@ -98,7 +98,6 @@ export function useSafePrivy() {
 
   useEffect(() => {
     if (!privyConfigured || privy.ready) {
-      setPrivyTimedOut(false);
       return;
     }
     const timer = setTimeout(() => {
@@ -107,8 +106,9 @@ export function useSafePrivy() {
     return () => clearTimeout(timer);
   }, [privyConfigured, privy.ready]);
 
+  const isTimedOut = Boolean(privyConfigured && !privy.ready && privyTimedOut);
   const ready = privyConfigured
-    ? privy.ready || privyTimedOut
+    ? privy.ready || isTimedOut
     : configLoaded || true;
 
   return {
@@ -117,6 +117,6 @@ export function useSafePrivy() {
     privyConfigured,
     adamTokenConfigured,
     configLoaded,
-    privyTimedOut,
+    privyTimedOut: isTimedOut,
   };
 }
