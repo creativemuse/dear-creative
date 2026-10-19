@@ -25,6 +25,10 @@ import {
   renderMarkdownToSafeHtml,
 } from "@/lib/html/markdown-to-html";
 import type { AdminPostRecord } from "@/lib/posts/manage-posts";
+import {
+  PAST_ISSUE_BANNERS,
+  resolvePostCoverImage,
+} from "@/lib/posts/post-cover-image";
 
 export type StudioTab = "chat" | "ideas" | "posts" | "approvals" | "schedule";
 type VoiceEngineMode = "google" | "browser";
@@ -34,6 +38,14 @@ type PostEditorMode = "markdown" | "html" | "preview";
 type ClientAttachment = StudioAttachmentInput & {
   id: string;
   previewUrl?: string;
+};
+
+type ChatThreadSummary = {
+  id: string;
+  title: string;
+  summary?: string | null;
+  updatedAt: number;
+  createdAt: number;
 };
 
 type BrowserSpeechRecognitionInstance = {
@@ -311,6 +323,11 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   const [chatInput, setChatInput] = useState("");
   const [chatAttachments, setChatAttachments] = useState<ClientAttachment[]>([]);
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [chatThreads, setChatThreads] = useState<ChatThreadSummary[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const activeThreadIdRef = useRef<string | null>(null);
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [editingThreadTitle, setEditingThreadTitle] = useState("");
 
   // Voice (STT + TTS) state
   const [voiceEngine, setVoiceEngine] = useState<VoiceEngineMode>("google");
@@ -366,6 +383,9 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   const [editPostEmailSubject, setEditPostEmailSubject] = useState("");
   const [editPostMarkdown, setEditPostMarkdown] = useState("");
   const [editPostHtml, setEditPostHtml] = useState("");
+  const [editPostBanner, setEditPostBanner] = useState("");
+  const [isUploadingBanner, setIsUploadingBanner] = useState(false);
+  const bannerFileInputRef = useRef<HTMLInputElement>(null);
   const [editPostMode, setEditPostMode] = useState<PostEditorMode>("markdown");
   const [isSavingPost, setIsSavingPost] = useState(false);
   const [isPolishingPost, setIsPolishingPost] = useState(false);
@@ -414,6 +434,12 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
       post.markdown || htmlToMarkdown(post.bodyHtml ?? post.emailHtml ?? ""),
     );
     setEditPostHtml(post.bodyHtml ?? post.emailHtml ?? "");
+    const initialBanner = resolvePostCoverImage({
+      slug: post.slug,
+      title: post.title,
+      bodyHtml: post.bodyHtml,
+    });
+    setEditPostBanner(initialBanner);
   }, []);
 
   const authFetch = useCallback(
@@ -440,13 +466,14 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
   const loadStudioData = useCallback(async () => {
     try {
-      const [meRes, ideasRes, approvalsRes, scheduleRes, postsRes] =
+      const [meRes, ideasRes, approvalsRes, scheduleRes, postsRes, threadsRes] =
         await Promise.all([
           authFetch("/api/admin/me"),
           authFetch("/api/adam/ideas"),
           authFetch("/api/approvals"),
           authFetch("/api/adam/schedule"),
           authFetch("/api/adam/posts"),
+          authFetch("/api/adam/chat/threads"),
         ]);
 
       if (meRes.ok) {
@@ -501,6 +528,56 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
             }
           } else if (!selectedEditPostIdRef.current) {
             selectPostForEditing(loadedPosts[0]!);
+          }
+        }
+      }
+
+      if (threadsRes.ok) {
+        const data = (await threadsRes.json()) as {
+          threads: Array<{
+            id: string;
+            title: string;
+            summary?: string | null;
+            updatedAt: string | number;
+            createdAt: string | number;
+          }>;
+        };
+        const mapped: ChatThreadSummary[] = (data.threads || []).map((t) => ({
+          id: t.id,
+          title: t.title,
+          summary: t.summary,
+          updatedAt: new Date(t.updatedAt).getTime(),
+          createdAt: new Date(t.createdAt).getTime(),
+        }));
+        setChatThreads(mapped);
+        if (mapped.length > 0 && !activeThreadIdRef.current) {
+          activeThreadIdRef.current = mapped[0]!.id;
+          setActiveThreadId(mapped[0]!.id);
+          try {
+            const tRes = await authFetch(
+              `/api/adam/chat/threads/${mapped[0]!.id}`,
+            );
+            if (tRes.ok) {
+              const tData = (await tRes.json()) as {
+                messages: Array<{
+                  role: "user" | "model" | "assistant";
+                  content: string;
+                  attachments?: ClientAttachment[];
+                }>;
+              };
+              const tMapped: StudioChatMessage[] = (tData.messages || []).map(
+                (m) => ({
+                  role: m.role === "model" ? "assistant" : "user",
+                  content: m.content,
+                  attachments: m.attachments,
+                }),
+              );
+              if (tMapped.length > 0) {
+                setMessages(tMapped);
+              }
+            }
+          } catch {
+            // ignore
           }
         }
       }
@@ -827,6 +904,139 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     [],
   );
 
+  // --- Chat Threads Management ---
+  const loadChatThreads = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/adam/chat/threads");
+      if (res.ok) {
+        const data = (await res.json()) as {
+          threads: Array<{
+            id: string;
+            title: string;
+            summary?: string | null;
+            updatedAt: string | number;
+            createdAt: string | number;
+          }>;
+        };
+        const mapped: ChatThreadSummary[] = (data.threads || []).map((t) => ({
+          id: t.id,
+          title: t.title,
+          summary: t.summary,
+          updatedAt: new Date(t.updatedAt).getTime(),
+          createdAt: new Date(t.createdAt).getTime(),
+        }));
+        setChatThreads(mapped);
+        return mapped;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  }, [authFetch]);
+
+  const selectChatThread = useCallback(
+    async (threadId: string) => {
+      try {
+        activeThreadIdRef.current = threadId;
+        setActiveThreadId(threadId);
+        const res = await authFetch(`/api/adam/chat/threads/${threadId}`);
+        if (res.ok) {
+          const data = (await res.json()) as {
+            thread: { id: string; title: string };
+            messages: Array<{
+              id: string;
+              role: "user" | "model" | "assistant";
+              content: string;
+              attachments?: ClientAttachment[];
+            }>;
+          };
+          const mapped: StudioChatMessage[] = (data.messages || []).map(
+            (m) => ({
+              role: m.role === "model" ? "assistant" : "user",
+              content: m.content,
+              attachments: m.attachments,
+            }),
+          );
+          if (mapped.length > 0) {
+            setMessages(mapped);
+          } else {
+            setMessages([
+              {
+                role: "assistant",
+                content:
+                  "Hi! I'm Adam. This is a fresh conversation thread. What are we brainstorming or drafting today?",
+              },
+            ]);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [authFetch],
+  );
+
+  const startNewChatThread = useCallback(() => {
+    activeThreadIdRef.current = null;
+    setActiveThreadId(null);
+    setChatInput("");
+    setChatAttachments([]);
+    setMessages([
+      {
+        role: "assistant",
+        content:
+          "Hi! I'm Adam, your Dear Creative editorial agent. You can chat with me by text or voice, upload images or reference files, paste rough ideas for me to turn into a newsletter draft, or configure my Monday morning schedule.",
+      },
+    ]);
+  }, []);
+
+  const renameChatThread = useCallback(
+    async (threadId: string, newTitle: string) => {
+      const trimmed = newTitle.trim();
+      if (!trimmed) return;
+      try {
+        const res = await authFetch(`/api/adam/chat/threads/${threadId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: trimmed }),
+        });
+        if (res.ok) {
+          setChatThreads((prev) =>
+            prev.map((t) => (t.id === threadId ? { ...t, title: trimmed } : t)),
+          );
+          setEditingThreadId(null);
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [authFetch],
+  );
+
+  const deleteChatThread = useCallback(
+    async (threadId: string) => {
+      if (
+        !confirm("Are you sure you want to delete this conversation thread?")
+      ) {
+        return;
+      }
+      try {
+        const res = await authFetch(`/api/adam/chat/threads/${threadId}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          setChatThreads((prev) => prev.filter((t) => t.id !== threadId));
+          if (activeThreadIdRef.current === threadId) {
+            startNewChatThread();
+          }
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [authFetch, startNewChatThread],
+  );
+
   // --- Send Chat to Adam ---
   const sendChatMessage = useCallback(
     async (options: { forceCreateDraft?: boolean } = {}) => {
@@ -863,6 +1073,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            threadId: activeThreadIdRef.current || undefined,
             message: userMessage.content,
             history: messages,
             attachments: currentAttachments,
@@ -872,6 +1083,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
         const data = (await res.json()) as {
           reply?: string;
+          threadId?: string;
           createdDraft?: {
             postId: string;
             approvalId: string;
@@ -888,6 +1100,12 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           });
           return;
         }
+
+        if (data.threadId) {
+          activeThreadIdRef.current = data.threadId;
+          setActiveThreadId(data.threadId);
+        }
+        void loadChatThreads();
 
         const replyText =
           data.reply || "I processed your request.";
@@ -922,6 +1140,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
       autoSpeakReplies,
       chatAttachments,
       chatInput,
+      loadChatThreads,
       loadStudioData,
       messages,
       speakText,
@@ -1168,6 +1387,57 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     }
   }, [authFetch, loadStudioData]);
 
+  // --- Upload Banner Image to Lens Grove ---
+  const handleUploadBannerToGrove = useCallback(
+    async (file: File) => {
+      setIsUploadingBanner(true);
+      setStatusBanner(null);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await authFetch("/api/admin/upload-banner", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          const err = (await res.json()) as { error?: string; details?: string };
+          throw new Error(err.details || err.error || "Lens Grove upload failed");
+        }
+        const data = (await res.json()) as { url: string; uri: string };
+        const bannerUrl = data.url;
+        setEditPostBanner(bannerUrl);
+        // Prepend or update banner markdown and html
+        setEditPostMarkdown((prev) => {
+          const clean = prev.replace(
+            /^!\[(?:Banner|Cover|Header)\]\([^\s)]+\)\n\n?/i,
+            "",
+          );
+          return `![Banner](${bannerUrl})\n\n${clean}`;
+        });
+        setEditPostHtml((prev) => {
+          const clean = prev.replace(
+            /^<img[^>]*class=["']dear-post-banner["'][^>]*>\s*/i,
+            "",
+          );
+          return `<img src="${bannerUrl}" alt="${editPostTitle}" class="dear-post-banner" />\n${clean}`;
+        });
+        setStatusBanner({
+          kind: "success",
+          text: `Banner uploaded to Lens Grove Storage successfully! (${bannerUrl})`,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Upload failed";
+        setStatusBanner({
+          kind: "error",
+          text: `Lens Grove upload failed: ${msg}`,
+        });
+      } finally {
+        setIsUploadingBanner(false);
+      }
+    },
+    [authFetch, editPostTitle],
+  );
+
   // --- Save Edited Post (Published or Draft) ---
   const handleSaveEditedPost = useCallback(
     async (e: FormEvent) => {
@@ -1349,6 +1619,125 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   ).length;
   const queuedIdeasCount = ideas.filter((i) => i.status === "queued").length;
   const isSignedIn = authenticated || Boolean(studioToken.trim());
+
+  if (!isSignedIn) {
+    return (
+      <div className="mx-auto max-w-xl px-6 py-20 text-center">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-zinc-200 bg-white text-3xl shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          🔒
+        </div>
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          <span>Private Editorial Studio &amp; Approvals</span>
+        </div>
+        <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          Sign In to Access Adam Studio
+        </h1>
+        <p className="mt-3 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          Adam Studio, Approvals, and post editing are restricted to the owner of Dear Creative.
+          Please sign in with Privy or enter your Studio Key to continue.
+        </p>
+
+        <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          {privyConfigured && !privyTimedOut ? (
+            <button
+              type="button"
+              onClick={login}
+              className="w-full sm:w-auto rounded-full bg-zinc-900 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            >
+              Sign in with Privy
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => setShowTokenPrompt(true)}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full border border-zinc-300 bg-white px-5 py-3 text-sm font-medium text-zinc-700 shadow-2xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            <span>🔑</span>
+            <span>Enter Studio Key</span>
+          </button>
+        </div>
+
+        <div className="mt-8 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <Link
+            href="/"
+            className="text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
+          >
+            ← Return to Public Site
+          </Link>
+        </div>
+
+        {/* Studio Token Modal Dialog */}
+        {showTokenPrompt ? (
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 text-left backdrop-blur-xs"
+          >
+            <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="flex items-center justify-between border-b border-zinc-100 pb-3 dark:border-zinc-800">
+                <h3 className="text-base font-semibold">
+                  Studio Key Authentication
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowTokenPrompt(false)}
+                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                Enter the <code>ADAM_API_TOKEN</code> configured in your{" "}
+                <code>.env.local</code> to access Adam Studio without Privy.
+              </p>
+              <form
+                onSubmit={(e) => {
+                  handleSaveStudioToken(e);
+                  setShowTokenPrompt(false);
+                }}
+                className="mt-4 space-y-4"
+              >
+                <div>
+                  <label
+                    htmlFor="modal-studio-token-input-gated"
+                    className="mb-1 block text-xs font-medium"
+                  >
+                    ADAM_API_TOKEN
+                  </label>
+                  <input
+                    id="modal-studio-token-input-gated"
+                    type="password"
+                    value={studioTokenInput}
+                    onChange={(e) => setStudioTokenInput(e.target.value)}
+                    placeholder="Paste your secret token here…"
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 font-mono text-xs focus:border-zinc-900 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-950 dark:focus:border-zinc-300"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowTokenPrompt(false)}
+                    className="rounded-full px-4 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-full bg-zinc-900 px-5 py-2 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900"
+                  >
+                    Save &amp; Continue
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-12">
@@ -1608,6 +1997,151 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
       {activeTab === "chat" ? (
         <section className="mt-6 grid gap-6 lg:grid-cols-3">
           <div className="flex flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs lg:col-span-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+            {/* Thread Header Bar */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-3 dark:border-zinc-800/80">
+              <div className="flex max-w-full items-center gap-1.5 overflow-x-auto py-0.5">
+                <button
+                  type="button"
+                  onClick={startNewChatThread}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                    activeThreadId === null
+                      ? "bg-zinc-900 text-white shadow-2xs dark:bg-zinc-100 dark:text-zinc-900"
+                      : "border border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  }`}
+                  title="Start a fresh conversation thread"
+                >
+                  <svg
+                    className="h-3.5 w-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  <span>New Chat</span>
+                </button>
+
+                {chatThreads.map((thread) => {
+                  const isActive = activeThreadId === thread.id;
+                  const isEditing = editingThreadId === thread.id;
+
+                  if (isEditing) {
+                    return (
+                      <div
+                        key={thread.id}
+                        className="inline-flex items-center gap-1 rounded-lg border border-amber-500 bg-amber-50/50 px-2 py-0.5 dark:bg-amber-950/30"
+                      >
+                        <input
+                          type="text"
+                          value={editingThreadTitle}
+                          onChange={(e) => setEditingThreadTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              void renameChatThread(thread.id, editingThreadTitle);
+                            } else if (e.key === "Escape") {
+                              setEditingThreadId(null);
+                            }
+                          }}
+                          className="w-28 bg-transparent text-xs font-medium text-zinc-900 outline-hidden dark:text-zinc-100"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void renameChatThread(thread.id, editingThreadTitle)
+                          }
+                          className="text-[10px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={thread.id}
+                      className={`group relative inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition ${
+                        isActive
+                          ? "border-zinc-900 bg-zinc-900 font-medium text-white shadow-2xs dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                          : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void selectChatThread(thread.id)}
+                        className="max-w-[130px] truncate text-left"
+                        title={thread.title}
+                      >
+                        {thread.title}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingThreadId(thread.id);
+                          setEditingThreadTitle(thread.title);
+                        }}
+                        className={`p-0.5 opacity-0 transition group-hover:opacity-100 hover:text-amber-500 ${
+                          isActive
+                            ? "text-zinc-400 hover:text-white dark:text-zinc-600 dark:hover:text-zinc-900"
+                            : ""
+                        }`}
+                        title="Rename conversation"
+                      >
+                        <svg
+                          className="h-3 w-3"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void deleteChatThread(thread.id);
+                        }}
+                        className={`p-0.5 opacity-0 transition group-hover:opacity-100 hover:text-rose-500 ${
+                          isActive
+                            ? "text-zinc-400 hover:text-white dark:text-zinc-600 dark:hover:text-zinc-900"
+                            : ""
+                        }`}
+                        title="Delete conversation"
+                      >
+                        <svg
+                          className="h-3 w-3"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                        </svg>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="shrink-0 text-[11px] text-zinc-400">
+                {activeThreadId ? (
+                  <span>
+                    Thread: <code className="font-mono">{activeThreadId.slice(7, 15)}</code>
+                  </span>
+                ) : (
+                  <span>New Session</span>
+                )}
+              </div>
+            </div>
+
             {/* Conversation Thread */}
             <div className="max-h-[460px] min-h-[320px] flex-1 space-y-4 overflow-y-auto pr-2">
               {messages.map((msg, idx) => (
@@ -2601,6 +3135,187 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                   placeholder="Short subtitle shown under the title and on the posts index…"
                   className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                 />
+              </div>
+
+              {/* Post Banner & Thumbnail (Lens Grove) */}
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/50">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                      <span>Post Banner &amp; Thumbnail</span>
+                      <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                        Lens Grove Storage
+                      </span>
+                    </h3>
+                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                      Upload to decentralized Lens Grove Drive/Storage or enter an image URL. This image acts as the square thumbnail in the feed and hero banner on the article.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="file"
+                      ref={bannerFileInputRef}
+                      accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          void handleUploadBannerToGrove(file);
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingBanner || !selectedEditPostId}
+                      onClick={() => bannerFileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-2xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      <span>☁️</span>
+                      <span>
+                        {isUploadingBanner
+                          ? "Uploading to Grove…"
+                          : "Upload Banner (Lens Grove)"}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid items-center gap-4 sm:grid-cols-4">
+                  {/* Square Thumbnail Preview */}
+                  <div className="flex flex-col items-center gap-1 sm:items-start">
+                    <span className="text-[10px] font-medium text-zinc-400">
+                      Thumbnail (1:1)
+                    </span>
+                    <div className="relative aspect-square h-20 w-20 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 sm:h-24 sm:w-24 dark:border-zinc-800 dark:bg-zinc-900">
+                      {editPostBanner ? (
+                        <img
+                          src={editPostBanner}
+                          alt="Thumbnail preview"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center p-1 text-center text-[10px] text-zinc-400">
+                          Square Thumbnail
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Hero Banner Preview & URL Input */}
+                  <div className="space-y-2 sm:col-span-3">
+                    <div className="relative aspect-[21/9] max-h-36 w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
+                      {editPostBanner ? (
+                        <img
+                          src={editPostBanner}
+                          alt="Hero banner preview"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
+                          Widescreen Hero Banner
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editPostBanner}
+                        onChange={(e) => {
+                          const val = e.target.value.trim();
+                          setEditPostBanner(val);
+                          if (val) {
+                            setEditPostMarkdown((prev) => {
+                              const clean = prev.replace(
+                                /^!\[(?:Banner|Cover|Header)\]\([^\s)]+\)\n\n?/i,
+                                "",
+                              );
+                              return `![Banner](${val})\n\n${clean}`;
+                            });
+                          }
+                        }}
+                        placeholder="https://api.grove.storage/… or image URL"
+                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 font-mono text-xs text-zinc-800 placeholder-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+                      />
+                      {editPostBanner ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditPostBanner("");
+                            setEditPostMarkdown((prev) =>
+                              prev.replace(
+                                /^!\[(?:Banner|Cover|Header)\]\([^\s)]+\)\n\n?/i,
+                                "",
+                              ),
+                            );
+                            setEditPostHtml((prev) =>
+                              prev.replace(
+                                /^<img[^>]*class=["']dear-post-banner["'][^>]*>\s*/i,
+                                "",
+                              ),
+                            );
+                          }}
+                          className="shrink-0 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                          title="Reset Banner"
+                        >
+                          Clear
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-2.5">
+                      <p className="mb-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                        Or pick from historic <em>Dear Creative</em> banner editions:
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                        {PAST_ISSUE_BANNERS.map((banner) => {
+                          const isSelected = editPostBanner === banner.src;
+                          return (
+                            <button
+                              key={banner.slug}
+                              type="button"
+                              onClick={() => {
+                                setEditPostBanner(banner.src);
+                                setEditPostMarkdown((prev) => {
+                                  const clean = prev.replace(
+                                    /^!\[(?:Banner|Cover|Header)\]\([^\s)]+\)\n\n?/i,
+                                    "",
+                                  );
+                                  return `![Banner](${banner.src})\n\n${clean}`;
+                                });
+                                setEditPostHtml((prev) => {
+                                  const clean = prev.replace(
+                                    /^<img[^>]*class=["']dear-post-banner["'][^>]*>\s*/i,
+                                    "",
+                                  );
+                                  return `<img src="${banner.src}" alt="${banner.alt}" class="dear-post-banner w-full rounded-2xl mb-8 object-cover max-h-[420px]" />\n\n${clean}`;
+                                });
+                              }}
+                              className={`group relative overflow-hidden rounded-md border text-left transition ${
+                                isSelected
+                                  ? "border-amber-500 ring-2 ring-amber-500/40"
+                                  : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
+                              }`}
+                              title={banner.title}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={banner.src}
+                                alt={banner.alt}
+                                className="h-12 w-full object-cover"
+                              />
+                              <div className="truncate bg-zinc-950/85 px-1.5 py-1 text-[10px] font-medium text-zinc-200">
+                                {banner.title.split("•")[0]?.trim() || banner.slug}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Editor Mode & Formatting Toolbar */}

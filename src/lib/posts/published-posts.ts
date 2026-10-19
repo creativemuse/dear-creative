@@ -1,6 +1,9 @@
 import { and, count, desc, eq, isNotNull } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
 import { posts } from "@/db/schema";
+import { resolvePostCoverImage } from "./post-cover-image";
+import { calculateReadingTime } from "./reading-time";
+import { classifyArticleTopic } from "./topic-tagging";
 import type { PostMeta } from "./types";
 
 export const DEFAULT_PUBLISHED_PAGE_SIZE = 20;
@@ -36,13 +39,32 @@ function mapListRow(row: {
   publishedAt: Date | null;
   teaserText: string | null;
   canonicalUrl: string | null;
+  bodyHtml?: string | null;
 }): PublishedPostListItem {
+  const coverImage = resolvePostCoverImage({
+    slug: row.slug,
+    title: row.title,
+    bodyHtml: row.bodyHtml,
+  });
+
+  const metrics = calculateReadingTime(row.bodyHtml ?? row.teaserText);
+  const topic = classifyArticleTopic({
+    title: row.title,
+    excerpt: row.teaserText,
+    bodyHtml: row.bodyHtml,
+  });
+
   return {
     slug: row.slug,
     title: row.title,
     publishedAt: toIsoPublishedAt(row.publishedAt as Date),
     excerpt: row.teaserText ?? undefined,
     canonicalUrl: row.canonicalUrl,
+    coverImage,
+    readMinutes: metrics.readMinutes,
+    listenMinutes: metrics.listenMinutes,
+    readingTimeLabel: metrics.label,
+    topic,
   };
 }
 
@@ -78,6 +100,7 @@ export async function listPublishedPosts(
       publishedAt: posts.publishedAt,
       teaserText: posts.teaserText,
       canonicalUrl: posts.canonicalUrl,
+      bodyHtml: posts.bodyHtml,
     })
     .from(posts)
     .where(publishedFilter)
@@ -106,6 +129,7 @@ export async function listRecentPublishedPosts(
       publishedAt: posts.publishedAt,
       teaserText: posts.teaserText,
       canonicalUrl: posts.canonicalUrl,
+      bodyHtml: posts.bodyHtml,
     })
     .from(posts)
     .where(publishedFilter)

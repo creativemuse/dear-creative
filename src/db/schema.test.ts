@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  adamChatMessages,
+  adamChatThreads,
   approvalStatusEnum,
+  chatRoleEnum,
   deliveryChannelEnum,
   payMethodEnum,
   postSourceEnum,
@@ -28,4 +31,11 @@ describe("schema enums", () => {
     expect(approvalStatusEnum).toContain("approved");
     expect(deliveryChannelEnum).toEqual(["publish", "x", "email"]);
   });
+
+  it("defines Adam chat threads and messages tables", () => {
+    expect(chatRoleEnum).toEqual(["user", "model", "system"]);
+    expect(adamChatThreads).toBeDefined();
+    expect(adamChatMessages).toBeDefined();
+  });
 });
+

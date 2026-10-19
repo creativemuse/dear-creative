@@ -6,6 +6,7 @@ import {
   renderMarkdownToSafeHtml,
 } from "@/lib/html/markdown-to-html";
 import { sanitizeArticleHtml } from "@/lib/html/sanitize-article-html";
+import { getRecentFeedbackSummaryForEditorial } from "@/lib/posts/post-feedback";
 import { fetchActiveSponsors } from "./fetch-sponsors";
 import {
   createAdamIdea,
@@ -631,11 +632,16 @@ export async function runScheduledIssueDraft(
   const defaultSponsorId = sponsors[0]?.id ?? null;
   const dateLabel = (options.now ?? new Date()).toISOString().slice(0, 10);
 
+  const sentimentReport = await getRecentFeedbackSummaryForEditorial(db, 14);
+
   const autonomousPrompt = `You are drafting the scheduled Dear Creative weekly issue for ${dateLabel}.
 Editorial instructions: ${
     schedule.instructions ||
     "Write a thoughtful, actionable Dear Creative issue for independent creators and creative technologists."
   }
+
+${sentimentReport.summaryPromptText}
+
 Recent issues to avoid repeating:
 ${recentTitles || "(No recent issues)"}
 

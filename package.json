@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@alchemy/smart-accounts": "5.3.0",
+    "@lens-chain/storage-client": "^1.0.6",
     "@libsql/client": "^0.18.0",
     "@mdx-js/loader": "^3.1.1",
     "@mdx-js/react": "^3.1.1",

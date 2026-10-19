@@ -1,6 +1,5 @@
 "use client";
 
-import { usePrivy } from "@privy-io/react-auth";
 import {
   createContext,
   useContext,
@@ -8,7 +7,86 @@ import {
   useMemo,
   useState,
 } from "react";
-import { PrivyRootProvider } from "./privy-root-provider";
+import { PrivyBridgeContext, PrivyRootProvider } from "./privy-root-provider";
+
+export const STUDIO_TOKEN_STORAGE_KEY = "dear_creative_studio_token";
+
+export function useSafePrivy() {
+  const privy = useContext(PrivyBridgeContext);
+  const { privyConfigured, adamTokenConfigured, configLoaded } = useContext(
+    AuthRuntimeConfigContext,
+  );
+  const [privyTimedOut, setPrivyTimedOut] = useState(false);
+
+  const isPrivyMounted = Boolean(privy);
+  const isPrivyReady = privy?.ready ?? false;
+
+  useEffect(() => {
+    if (!privyConfigured || !isPrivyMounted || isPrivyReady) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPrivyTimedOut(true);
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [privyConfigured, isPrivyMounted, isPrivyReady]);
+
+  const isTimedOut = Boolean(privyConfigured && !isPrivyReady && privyTimedOut);
+  const ready = privyConfigured
+    ? isPrivyReady || isTimedOut
+    : configLoaded || true;
+
+  return {
+    ready,
+    authenticated: privy?.authenticated ?? false,
+    user: privy?.user ?? null,
+    login: privy?.login ?? (() => {}),
+    logout: privy?.logout ?? (async () => {}),
+    getAccessToken: privy?.getAccessToken ?? (async () => null),
+    privyConfigured,
+    adamTokenConfigured,
+    configLoaded,
+    privyTimedOut: isTimedOut,
+  };
+}
+
+/**
+ * Returns true if the user is authenticated either via Privy or using a Studio Key (ADAM_API_TOKEN).
+ */
+export function useAuthSession() {
+  const privy = useSafePrivy();
+  const [hasStudioToken, setHasStudioToken] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const token = window.localStorage.getItem(STUDIO_TOKEN_STORAGE_KEY);
+      const timer = setTimeout(
+        () => setHasStudioToken(Boolean(token?.trim())),
+        0,
+      );
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  const isSignedIn = privy.authenticated || hasStudioToken;
+
+  const handleSignOut = async () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STUDIO_TOKEN_STORAGE_KEY);
+    }
+    setHasStudioToken(false);
+    if (privy.authenticated) {
+      await privy.logout();
+    }
+  };
+
+  return {
+    ...privy,
+    isSignedIn,
+    hasStudioToken,
+    signOut: handleSignOut,
+  };
+}
 
 type AuthRuntimeConfig = {
   privyConfigured: boolean;
@@ -89,34 +167,3 @@ export function AppProviders({ privyAppId, children }: AppProvidersProps) {
   );
 }
 
-export function useSafePrivy() {
-  const privy = usePrivy();
-  const { privyConfigured, adamTokenConfigured, configLoaded } = useContext(
-    AuthRuntimeConfigContext,
-  );
-  const [privyTimedOut, setPrivyTimedOut] = useState(false);
-
-  useEffect(() => {
-    if (!privyConfigured || privy.ready) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      setPrivyTimedOut(true);
-    }, 3500);
-    return () => clearTimeout(timer);
-  }, [privyConfigured, privy.ready]);
-
-  const isTimedOut = Boolean(privyConfigured && !privy.ready && privyTimedOut);
-  const ready = privyConfigured
-    ? privy.ready || isTimedOut
-    : configLoaded || true;
-
-  return {
-    ...privy,
-    ready,
-    privyConfigured,
-    adamTokenConfigured,
-    configLoaded,
-    privyTimedOut: isTimedOut,
-  };
-}

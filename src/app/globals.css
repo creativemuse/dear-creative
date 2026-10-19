@@ -281,3 +281,116 @@ body {
   object-fit: cover;
 }
 
+/* Standalone X / Twitter post embed cards */
+.prose .dear-x-card,
+.dear-x-card {
+  display: block;
+  margin-top: 1.75rem;
+  margin-bottom: 1.75rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(161, 161, 170, 0.35);
+  background: linear-gradient(135deg, rgba(24, 24, 27, 0.02) 0%, rgba(24, 24, 27, 0.01) 100%);
+  font-style: normal;
+  text-decoration: none;
+  opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .prose .dear-x-card,
+  .dear-x-card {
+    border-color: rgba(63, 63, 70, 0.6);
+    background: linear-gradient(135deg, rgba(24, 24, 27, 0.7) 0%, rgba(9, 9, 11, 0.9) 100%);
+  }
+}
+
+.dear-x-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.625rem;
+}
+
+.dear-x-card-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: 9999px;
+  background-color: #000000;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.8125rem;
+  line-height: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dear-x-card-logo {
+    background-color: #ffffff;
+    color: #000000;
+  }
+}
+
+.dear-x-card-author {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: inherit;
+}
+
+.dear-x-card-body {
+  margin: 0 !important;
+  font-size: 0.9375rem;
+}
+
+.dear-x-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  color: #2563eb;
+  transition: color 0.15s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dear-x-link {
+    color: #60a5fa;
+  }
+}
+
+/* Inline X link styling */
+.dear-x-inline-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.dear-x-inline-link::before {
+  content: "𝕏";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.15em;
+  border-radius: 9999px;
+  background-color: #000000;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.75em;
+  line-height: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dear-x-inline-link::before {
+    background-color: #ffffff;
+    color: #000000;
+  }
+}
+
+

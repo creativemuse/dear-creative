@@ -63,7 +63,11 @@ function isAllowedHref(href: string): boolean {
 function isAllowedImgSrc(src: string): boolean {
   if (!src) return false;
   const lower = src.toLowerCase();
-  return lower.startsWith("http://") || lower.startsWith("https://");
+  return (
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
+    lower.startsWith("/")
+  );
 }
 
 /**
@@ -74,8 +78,12 @@ export function sanitizeArticleHtml(raw: string): string {
   return sanitizeHtml(raw, {
     allowedTags: [...ALLOWED_TAGS],
     allowedAttributes: {
-      a: ["href", "rel", "class"],
+      a: ["href", "rel", "class", "target"],
       img: ["src", "alt", "loading"],
+      blockquote: ["class", "data-dnt", "cite"],
+      div: ["class"],
+      span: ["class"],
+      p: ["class"],
     },
     allowedSchemes: ["http", "https", "mailto"],
     allowedSchemesByTag: {
@@ -104,7 +112,61 @@ export function sanitizeArticleHtml(raw: string): string {
           attribs: {
             href,
             ...(safeClass ? { class: safeClass } : {}),
+            ...(attribs.target === "_blank" ? { target: "_blank" } : {}),
             rel: "noopener noreferrer nofollow",
+          },
+        };
+      },
+      blockquote: (tagName, attribs) => {
+        const rawClass = (attribs.class ?? "").trim();
+        const safeClass = rawClass
+          .split(/\s+/)
+          .filter((c) => /^[a-zA-Z0-9_-]+$/.test(c))
+          .join(" ");
+        return {
+          tagName,
+          attribs: {
+            ...(safeClass ? { class: safeClass } : {}),
+            ...(attribs["data-dnt"] ? { "data-dnt": attribs["data-dnt"] } : {}),
+          },
+        };
+      },
+      div: (tagName, attribs) => {
+        const rawClass = (attribs.class ?? "").trim();
+        const safeClass = rawClass
+          .split(/\s+/)
+          .filter((c) => /^[a-zA-Z0-9_-]+$/.test(c))
+          .join(" ");
+        return {
+          tagName,
+          attribs: {
+            ...(safeClass ? { class: safeClass } : {}),
+          },
+        };
+      },
+      span: (tagName, attribs) => {
+        const rawClass = (attribs.class ?? "").trim();
+        const safeClass = rawClass
+          .split(/\s+/)
+          .filter((c) => /^[a-zA-Z0-9_-]+$/.test(c))
+          .join(" ");
+        return {
+          tagName,
+          attribs: {
+            ...(safeClass ? { class: safeClass } : {}),
+          },
+        };
+      },
+      p: (tagName, attribs) => {
+        const rawClass = (attribs.class ?? "").trim();
+        const safeClass = rawClass
+          .split(/\s+/)
+          .filter((c) => /^[a-zA-Z0-9_-]+$/.test(c))
+          .join(" ");
+        return {
+          tagName,
+          attribs: {
+            ...(safeClass ? { class: safeClass } : {}),
           },
         };
       },
