@@ -1,6 +1,5 @@
 "use client";
 
-import { usePrivy } from "@privy-io/react-auth";
 import Link from "next/link";
 import {
   useCallback,
@@ -12,6 +11,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import { useSafePrivy } from "@/components/providers/app-providers";
 import type {
   StudioAttachmentInput,
   StudioChatMessage,
@@ -114,6 +114,8 @@ async function readFileAsAttachment(file: File): Promise<ClientAttachment> {
   };
 }
 
+const STUDIO_TOKEN_STORAGE_KEY = "dear_creative_studio_token";
+
 const SCHEDULE_PRESETS = [
   { label: "Every Monday at 9:00 AM", cron: "0 9 * * 1" },
   { label: "Every Monday & Thursday at 9:00 AM", cron: "0 9 * * 1,4" },
@@ -122,7 +124,21 @@ const SCHEDULE_PRESETS = [
 ] as const;
 
 export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) {
-  const { ready, authenticated, login, logout, getAccessToken } = usePrivy();
+  const {
+    ready,
+    authenticated,
+    login,
+    logout,
+    getAccessToken,
+    privyConfigured,
+    privyTimedOut,
+  } = useSafePrivy();
+  const [studioToken, setStudioToken] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem(STUDIO_TOKEN_STORAGE_KEY)?.trim() ?? "";
+  });
+  const [studioTokenInput, setStudioTokenInput] = useState("");
+  const [showTokenPrompt, setShowTokenPrompt] = useState(false);
   const [activeTab, setActiveTab] = useState<StudioTab>(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -251,14 +267,24 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
   const authFetch = useCallback(
     async (url: string, init: RequestInit = {}) => {
-      const token = await getAccessToken();
+      let token: string | null = null;
+      if (privyConfigured && authenticated) {
+        try {
+          token = await getAccessToken();
+        } catch {
+          token = null;
+        }
+      }
+      if (!token && studioToken.trim()) {
+        token = studioToken.trim();
+      }
       const headers = new Headers(init.headers);
       if (token) {
         headers.set("Authorization", `Bearer ${token}`);
       }
       return fetch(url, { ...init, headers });
     },
-    [getAccessToken],
+    [authenticated, getAccessToken, privyConfigured, studioToken],
   );
 
   const loadStudioData = useCallback(async () => {
@@ -333,12 +359,43 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   }, [authFetch, selectPostForEditing]);
 
   useEffect(() => {
-    if (!ready || !authenticated) return;
+    const hasSession = (ready && authenticated) || Boolean(studioToken.trim());
+    if (!hasSession) return;
     const timer = setTimeout(() => {
       void loadStudioData();
     }, 0);
     return () => clearTimeout(timer);
-  }, [ready, authenticated, loadStudioData]);
+  }, [ready, authenticated, studioToken, loadStudioData]);
+
+  const handleSaveStudioToken = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      const trimmed = studioTokenInput.trim();
+      if (!trimmed) return;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(STUDIO_TOKEN_STORAGE_KEY, trimmed);
+      }
+      setStudioToken(trimmed);
+      setStudioTokenInput("");
+      setShowTokenPrompt(false);
+      setStatusBanner({
+        kind: "info",
+        text: "Studio token saved. Verifying session…",
+      });
+    },
+    [studioTokenInput],
+  );
+
+  const handleSignOut = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STUDIO_TOKEN_STORAGE_KEY);
+    }
+    setStudioToken("");
+    setAdminStatus({ checked: false, isAdmin: false, userId: null });
+    if (authenticated) {
+      void logout();
+    }
+  }, [authenticated, logout]);
 
   // Stop any playing speech on unmount
   useEffect(() => {
@@ -1140,6 +1197,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     (a) => a.status === "pending",
   ).length;
   const queuedIdeasCount = ideas.filter((i) => i.status === "queued").length;
+  const isSignedIn = authenticated || Boolean(studioToken.trim());
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-12">
@@ -1162,21 +1220,62 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {!authenticated ? (
-            <button
-              type="button"
-              onClick={login}
-              className="rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-            >
-              Sign in with Privy
-            </button>
+        <div className="flex flex-wrap items-center gap-3">
+          {!isSignedIn ? (
+            <>
+              {privyConfigured && !privyTimedOut ? (
+                <button
+                  type="button"
+                  onClick={login}
+                  className="rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                >
+                  Sign in with Privy
+                </button>
+              ) : null}
+
+              {showTokenPrompt || !privyConfigured || privyTimedOut ? (
+                <form
+                  onSubmit={handleSaveStudioToken}
+                  className="flex flex-wrap items-center gap-2"
+                >
+                  <label htmlFor="studio-token-input" className="sr-only">
+                    Studio Token (ADAM_API_TOKEN)
+                  </label>
+                  <input
+                    id="studio-token-input"
+                    type="password"
+                    value={studioTokenInput}
+                    onChange={(e) => setStudioTokenInput(e.target.value)}
+                    placeholder="Enter ADAM_API_TOKEN…"
+                    className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-xs focus:border-zinc-900 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-900 dark:focus:border-zinc-300"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                  >
+                    Connect Studio
+                  </button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowTokenPrompt(true)}
+                  className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                >
+                  Use Studio Key
+                </button>
+              )}
+            </>
           ) : (
             <>
               <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
                 {adminStatus.isAdmin
-                  ? "Verified Admin"
-                  : "Signed in (Admin required)"}
+                  ? studioToken && !authenticated
+                    ? "Verified Admin (Studio Key)"
+                    : "Verified Admin"
+                  : adminStatus.checked
+                    ? "Invalid Token / Admin Required"
+                    : "Verifying session…"}
               </span>
               <button
                 type="button"
@@ -1187,7 +1286,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
               </button>
               <button
                 type="button"
-                onClick={logout}
+                onClick={handleSignOut}
                 className="rounded-full px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
               >
                 Sign out

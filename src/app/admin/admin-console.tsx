@@ -1,10 +1,18 @@
 "use client";
 
-import { usePrivy } from "@privy-io/react-auth";
 import { useCallback, useState } from "react";
+import { useSafePrivy } from "@/components/providers/app-providers";
 
 export function AdminConsole() {
-  const { ready, authenticated, login, logout, getAccessToken } = usePrivy();
+  const {
+    ready,
+    authenticated,
+    login,
+    logout,
+    getAccessToken,
+    privyConfigured,
+    privyTimedOut,
+  } = useSafePrivy();
   const [session, setSession] = useState<{
     userId: string;
     isAdmin: boolean;
@@ -35,11 +43,26 @@ export function AdminConsole() {
 
   return (
     <div className="space-y-4">
-      {!authenticated ? (
+      {!privyConfigured ? (
+        <div className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+          <p className="font-medium">
+            Privy is not configured (<code>NEXT_PUBLIC_PRIVY_APP_ID</code> is
+            not set).
+          </p>
+          <p>
+            You can still sign in directly on{" "}
+            <a href="/adam" className="font-semibold underline">
+              Adam Studio (/adam)
+            </a>{" "}
+            using your <code>ADAM_API_TOKEN</code>.
+          </p>
+        </div>
+      ) : !authenticated ? (
         <button
           type="button"
           onClick={login}
-          className="rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white"
+          disabled={privyTimedOut}
+          className="rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
         >
           Sign in with Privy
         </button>

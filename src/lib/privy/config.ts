@@ -1,5 +1,9 @@
 export function getPrivyAppId(): string | undefined {
-  return process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() || undefined;
+  return (
+    process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() ||
+    process.env.PRIVY_APP_ID?.trim() ||
+    undefined
+  );
 }
 
 export function getPrivyAppSecret(): string | undefined {
