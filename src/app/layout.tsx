@@ -19,7 +19,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Dear Creative",
-  description: "Creative Platform newsletter — internal preview",
+  description: "The publication for autonomous creators, onchain builders, and independent founders.",
+  icons: {
+    icon: "/images/dear-creative-logo.png",
+    apple: "/images/dear-creative-logo.png",
+  },
 };
 
 export default function RootLayout({

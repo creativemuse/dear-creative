@@ -31,6 +31,7 @@ export function listContentPosts(): PostMeta[] {
         publishedAt: "2026-10-01T12:00:00.000Z",
         excerpt:
           "First sample issue for the owned newsletter stack — internal preview only.",
+        coverImage: "/images/hello-dear-creative-banner.jpg",
       };
     }
     const _never: never = slug;

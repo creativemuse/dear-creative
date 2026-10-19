@@ -431,3 +431,79 @@ export const adamSchedules = sqliteTable("adam_schedules", {
     .default(sql`(unixepoch() * 1000)`),
 });
 
+export const postFeedbackSentimentEnum = ["helpful", "skip"] as const;
+export type PostFeedbackSentiment = (typeof postFeedbackSentimentEnum)[number];
+
+export const postFeedback = sqliteTable(
+  "post_feedback",
+  {
+    id: text("id").primaryKey(),
+    slug: text("slug").notNull(),
+    sentiment: text("sentiment", { enum: postFeedbackSentimentEnum }).notNull(),
+    voterHash: text("voter_hash"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index("post_feedback_slug_idx").on(table.slug),
+    index("post_feedback_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export const chatRoleEnum = ["user", "model", "system"] as const;
+export type ChatRole = (typeof chatRoleEnum)[number];
+
+export const adamChatThreads = sqliteTable(
+  "adam_chat_threads",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull().default("New Conversation"),
+    summary: text("summary"),
+    isArchived: integer("is_archived", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index("adam_chat_threads_updated_at_idx").on(table.updatedAt),
+    index("adam_chat_threads_is_archived_idx").on(table.isArchived),
+  ],
+);
+
+export type AdamChatThreadRecord = typeof adamChatThreads.$inferSelect;
+
+export const adamChatMessages = sqliteTable(
+  "adam_chat_messages",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => adamChatThreads.id, { onDelete: "cascade" }),
+    role: text("role", { enum: chatRoleEnum }).notNull(),
+    content: text("content").notNull(),
+    attachmentsJson: text("attachments_json"),
+    createdDraftPostId: text("created_draft_post_id").references(
+      () => posts.id,
+      { onDelete: "set null" },
+    ),
+    createdApprovalId: text("created_approval_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index("adam_chat_messages_thread_id_idx").on(table.threadId),
+    index("adam_chat_messages_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export type AdamChatMessageRecord = typeof adamChatMessages.$inferSelect;
+
+
+

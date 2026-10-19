@@ -45,7 +45,17 @@ function formatInlineMarkdown(raw: string): string {
   // Links: [label](https://example.com) or mailto: or relative path /... or #anchor
   working = working.replace(
     /\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/|#)[^\s)]+)\)/g,
-    '<a href="$2">$1</a>',
+    (_match, label: string, url: string) => {
+      const isX = /^https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\b/i.test(url);
+      const cls = isX ? ' class="dear-x-link"' : "";
+      return `<a href="${url}"${cls}>${label}</a>`;
+    },
+  );
+
+  // Autolink bare X.com and twitter.com URLs not already inside an anchor tag
+  working = working.replace(
+    /(^|[^"=])(https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s<)]+)/gi,
+    '$1<a href="$2" class="dear-x-link" target="_blank" rel="noopener noreferrer nofollow">$2</a>',
   );
 
   // Bold: **text** or __text__
@@ -110,6 +120,25 @@ export function renderMarkdownToSafeHtml(markdown: string): string {
     // Horizontal rule
     if (/^(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line.trim())) {
       blocks.push("<hr />");
+      i++;
+      continue;
+    }
+
+    // Standalone X / Twitter post embed: https://x.com/user/status/12345
+    const cleanLine = line
+      .trim()
+      .replace(/^<(.+)>$/, "$1")
+      .replace(/^\[[^\]]*\]\((.+)\)$/, "$1");
+    const xStatusMatch =
+      /^(?:https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([a-zA-Z0-9_]+)\/status\/(\d+)(?:\?[^\s]*)?)$/i.exec(
+        cleanLine,
+      );
+    if (xStatusMatch) {
+      const username = xStatusMatch[1]!;
+      const postUrl = cleanLine;
+      blocks.push(
+        `<blockquote class="twitter-tweet dear-x-card" data-dnt="true"><div class="dear-x-card-header"><span class="dear-x-card-logo">𝕏</span><span class="dear-x-card-author">@${username}</span></div><p class="dear-x-card-body"><a href="${postUrl}" target="_blank" rel="noopener noreferrer nofollow" class="dear-x-link">View post on 𝕏 (@${username}) ↗</a></p></blockquote>`,
+      );
       i++;
       continue;
     }
@@ -196,7 +225,13 @@ export function cleanArchiveBodyArtifacts(raw: string): string {
       const level = hashes.length;
       const tag = level <= 2 ? "h2" : level === 3 ? "h3" : "h4";
       return `<${tag}>${text.trim()}</${tag}>`;
-    });
+    })
+    .replace(
+      /<p>\s*<a\s+[^>]*href="(https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([a-zA-Z0-9_]+)\/status\/(\d+)[^"]*)"[^>]*>.*?<\/a>\s*<\/p>/gi,
+      (_m, url: string, user: string) => {
+        return `<blockquote class="twitter-tweet dear-x-card" data-dnt="true"><div class="dear-x-card-header"><span class="dear-x-card-logo">𝕏</span><span class="dear-x-card-author">@${user}</span></div><p class="dear-x-card-body"><a href="${url}" target="_blank" rel="noopener noreferrer nofollow" class="dear-x-link">View post on 𝕏 (@${user}) ↗</a></p></blockquote>`;
+      },
+    );
 }
 
 /**

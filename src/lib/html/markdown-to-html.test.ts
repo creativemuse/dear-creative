@@ -68,5 +68,26 @@ describe("renderMarkdownToSafeHtml & ensureArticleHtml", () => {
     expect(html).toContain('href="/#subscribe"');
     expect(html).toContain("Subscribe to Newsletter →");
   });
+
+  it("converts standalone X.com and twitter.com links into embedded X cards", () => {
+    const md =
+      "Check out this dispatch:\n\nhttps://x.com/dearcreative/status/18480392817291028\n\nMore notes below.";
+    const html = renderMarkdownToSafeHtml(md);
+
+    expect(html).toContain('class="twitter-tweet dear-x-card"');
+    expect(html).toContain("@dearcreative");
+    expect(html).toContain("https://x.com/dearcreative/status/18480392817291028");
+    expect(html).toContain("𝕏");
+  });
+
+  it("autolinks and styles inline X.com profile and post links", () => {
+    const md =
+      "Follow our updates on https://x.com/dearcreative or read [the thread](https://twitter.com/dearcreative/status/123).";
+    const html = renderMarkdownToSafeHtml(md);
+
+    expect(html).toContain('class="dear-x-link"');
+    expect(html).toContain('href="https://x.com/dearcreative"');
+    expect(html).toContain('href="https://twitter.com/dearcreative/status/123"');
+  });
 });
 

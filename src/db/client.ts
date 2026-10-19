@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { createClient, type Client } from "@libsql/client";
 import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
 import * as schema from "./schema";
@@ -27,6 +29,19 @@ export function createDbClient(url = resolveDatabaseUrl()): Client {
     throw new Error(
       "TURSO_AUTH_TOKEN is required for remote libSQL URLs (not configured in this repo).",
     );
+  }
+  if (url.startsWith("file:")) {
+    const rawPath = url.slice(5);
+    if (rawPath && !rawPath.startsWith(":memory:")) {
+      try {
+        const resolvedDir = dirname(resolve(rawPath));
+        if (!existsSync(resolvedDir)) {
+          mkdirSync(resolvedDir, { recursive: true });
+        }
+      } catch {
+        // Ignore filesystem errors for custom or mocked environments
+      }
+    }
   }
   return createClient({
     url,
