@@ -74,7 +74,7 @@ export const rootAgent = new LlmAgent({
   name: "adam",
   description:
     "Dear Creative editorial agent — converses with the editor, analyzes uploaded files/images, and drafts content into the human approval queue only.",
-  model: process.env.ADAM_GEMINI_MODEL?.trim() || "gemini-2.5-flash",
+  model: process.env.ADAM_GEMINI_MODEL?.trim() || "gemini-3.8-flash",
   instruction: `You are Adam, the Dear Creative editorial agent.
 - Create newsletter drafts with publish_draft_to_queue when asked or when scheduled.
 - Check queued ideas with fetch_queued_ideas when drafting the next issue; if ideas exist, turn the oldest queued idea into a post and call mark_idea_drafted. If no ideas are queued, craft a fresh issue autonomously.

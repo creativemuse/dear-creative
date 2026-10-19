@@ -123,6 +123,137 @@ const SCHEDULE_PRESETS = [
   { label: "Every Weekday at 8:30 AM", cron: "30 8 * * 1-5" },
 ] as const;
 
+function formatCronToHuman(cron: string, timezone = "America/New_York"): string {
+  const tzMap: Record<string, string> = {
+    "America/New_York": "Eastern Time",
+    "America/Chicago": "Central Time",
+    "America/Denver": "Mountain Time",
+    "America/Los_Angeles": "Pacific Time",
+    UTC: "UTC",
+    "Europe/London": "London (GMT/BST)",
+  };
+  const tzLabel = tzMap[timezone] || timezone;
+
+  const preset = SCHEDULE_PRESETS.find((p) => p.cron === cron.trim());
+  if (preset) {
+    return `${preset.label} (${tzLabel})`;
+  }
+
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length === 5) {
+    const [min, hour, , , dow] = parts;
+    const hourNum = parseInt(hour, 10);
+    const minNum = parseInt(min, 10);
+    if (!isNaN(hourNum) && !isNaN(minNum)) {
+      const ampm = hourNum >= 12 ? "PM" : "AM";
+      const h12 = hourNum % 12 || 12;
+      const timeStr = `${h12}:${minNum.toString().padStart(2, "0")} ${ampm}`;
+      const dayMap: Record<string, string> = {
+        "0": "Sunday",
+        "1": "Monday",
+        "2": "Tuesday",
+        "3": "Wednesday",
+        "4": "Thursday",
+        "5": "Friday",
+        "6": "Saturday",
+        "7": "Sunday",
+        "1,4": "Monday & Thursday",
+        "1-5": "Weekday (Mon–Fri)",
+        "*": "day",
+      };
+      const dayStr = dayMap[dow] ? `Every ${dayMap[dow]}` : `Weekly (days: ${dow})`;
+      return `${dayStr} at ${timeStr} (${tzLabel})`;
+    }
+  }
+  return `${cron} (${tzLabel})`;
+}
+
+function StudioUploadMenu({
+  isOpen,
+  onToggle,
+  onSelectAccept,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  onSelectAccept: (accept: string) => void;
+}) {
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3.5 py-2 text-xs font-medium text-zinc-700 shadow-2xs transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        title="Upload images, documents, or reference files"
+      >
+        <svg
+          className="h-3.5 w-3.5 text-zinc-500"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        <span>Upload</span>
+        <svg
+          className="h-3 w-3 opacity-60"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {isOpen ? (
+        <div className="absolute bottom-full left-0 mb-2 w-52 rounded-2xl border border-zinc-200 bg-white p-1.5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900 z-30">
+          <button
+            type="button"
+            onClick={() => onSelectAccept("image/*")}
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 text-left transition"
+          >
+            <span className="text-sm">🖼️</span>
+            <span>Images (PNG, JPG, WebP)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectAccept("application/pdf")}
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 text-left transition"
+          >
+            <span className="text-sm">📄</span>
+            <span>Docs (PDF)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectAccept("text/*,.md,.mdx,.csv,.json")}
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 text-left transition"
+          >
+            <span className="text-sm">📁</span>
+            <span>Files (.md, text, code)</span>
+          </button>
+          <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+          <button
+            type="button"
+            onClick={() =>
+              onSelectAccept(
+                "image/*,application/pdf,text/*,.md,.mdx,.csv,.json,audio/*",
+              )
+            }
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 text-left transition"
+          >
+            <span className="text-sm">📎</span>
+            <span>All Supported Files</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) {
   const {
     ready,
@@ -250,6 +381,26 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
   const chatFileInputId = useId();
   const ideaFileInputId = useId();
+  const [chatUploadMenuOpen, setChatUploadMenuOpen] = useState(false);
+  const [ideaUploadMenuOpen, setIdeaUploadMenuOpen] = useState(false);
+  const chatFileInputRef = useRef<HTMLInputElement>(null);
+  const ideaFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSelectChatAccept = (accept: string) => {
+    setChatUploadMenuOpen(false);
+    if (chatFileInputRef.current) {
+      chatFileInputRef.current.accept = accept;
+      chatFileInputRef.current.click();
+    }
+  };
+
+  const handleSelectIdeaAccept = (accept: string) => {
+    setIdeaUploadMenuOpen(false);
+    if (ideaFileInputRef.current) {
+      ideaFileInputRef.current.accept = accept;
+      ideaFileInputRef.current.click();
+    }
+  };
 
   const selectPostForEditing = useCallback((post: AdminPostRecord) => {
     selectedEditPostIdRef.current = post.id;
@@ -1220,55 +1371,33 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           {!isSignedIn ? (
             <>
               {privyConfigured && !privyTimedOut ? (
                 <button
                   type="button"
                   onClick={login}
-                  className="rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                  className="rounded-full bg-zinc-900 px-5 py-2 text-xs font-semibold text-white shadow-2xs transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
                 >
                   Sign in with Privy
                 </button>
               ) : null}
 
-              {showTokenPrompt || !privyConfigured || privyTimedOut ? (
-                <form
-                  onSubmit={handleSaveStudioToken}
-                  className="flex flex-wrap items-center gap-2"
-                >
-                  <label htmlFor="studio-token-input" className="sr-only">
-                    Studio Token (ADAM_API_TOKEN)
-                  </label>
-                  <input
-                    id="studio-token-input"
-                    type="password"
-                    value={studioTokenInput}
-                    onChange={(e) => setStudioTokenInput(e.target.value)}
-                    placeholder="Enter ADAM_API_TOKEN…"
-                    className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-xs focus:border-zinc-900 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-900 dark:focus:border-zinc-300"
-                  />
-                  <button
-                    type="submit"
-                    className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-                  >
-                    Connect Studio
-                  </button>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowTokenPrompt(true)}
-                  className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                >
-                  Use Studio Key
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setShowTokenPrompt(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3.5 py-2 text-xs font-medium text-zinc-700 shadow-2xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                title="Connect with ADAM_API_TOKEN"
+              >
+                <span>🔑</span>
+                <span>Studio Key</span>
+              </button>
             </>
           ) : (
             <>
-              <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 {adminStatus.isAdmin
                   ? studioToken && !authenticated
                     ? "Verified Admin (Studio Key)"
@@ -1295,6 +1424,75 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           )}
         </div>
       </header>
+
+      {/* Studio Token Modal Dialog */}
+      {showTokenPrompt ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="flex items-center justify-between border-b border-zinc-100 pb-3 dark:border-zinc-800">
+              <h3 className="text-base font-semibold">
+                Studio Key Authentication
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowTokenPrompt(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+              Enter the <code>ADAM_API_TOKEN</code> configured in your{" "}
+              <code>.env.local</code> to access Adam Studio without Privy.
+            </p>
+            <form
+              onSubmit={(e) => {
+                handleSaveStudioToken(e);
+                setShowTokenPrompt(false);
+              }}
+              className="mt-4 space-y-4"
+            >
+              <div>
+                <label
+                  htmlFor="modal-studio-token-input"
+                  className="mb-1 block text-xs font-medium"
+                >
+                  ADAM_API_TOKEN
+                </label>
+                <input
+                  id="modal-studio-token-input"
+                  type="password"
+                  value={studioTokenInput}
+                  onChange={(e) => setStudioTokenInput(e.target.value)}
+                  placeholder="Paste your secret token here…"
+                  className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 font-mono text-xs focus:border-zinc-900 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-950 dark:focus:border-zinc-300"
+                  autoFocus
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTokenPrompt(false)}
+                  className="rounded-lg border border-zinc-300 px-4 py-2 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!studioTokenInput.trim()}
+                  className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+                >
+                  Connect Studio
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
 
       {/* Status Alert Banner */}
       {statusBanner ? (
@@ -1335,7 +1533,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
               : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
           }`}
         >
-          Chat &amp; Voice with Adam
+          Chat with Adam
         </button>
 
         <button
@@ -1435,11 +1633,54 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                           type="button"
                           onClick={() => void speakText(msg.content, idx)}
                           aria-pressed={speakingMessageIdx === idx}
-                          className="underline hover:opacity-100"
+                          aria-label={
+                            speakingMessageIdx === idx
+                              ? "Stop speaking"
+                              : "Listen to Adam read this response aloud"
+                          }
+                          title={
+                            speakingMessageIdx === idx
+                              ? "Stop speaking"
+                              : "Listen (TTS)"
+                          }
+                          className={`inline-flex items-center gap-1 rounded-md p-1 transition hover:opacity-100 ${
+                            speakingMessageIdx === idx
+                              ? "text-emerald-600 dark:text-emerald-400 font-medium"
+                              : "hover:text-zinc-900 dark:hover:text-zinc-100"
+                          }`}
                         >
-                          {speakingMessageIdx === idx
-                            ? "Stop Voice"
-                            : "Listen (TTS)"}
+                          {speakingMessageIdx === idx ? (
+                            <>
+                              <svg
+                                className="h-4 w-4 animate-pulse"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                              </svg>
+                              <span className="text-[11px]">Stop</span>
+                            </>
+                          ) : (
+                            <svg
+                              className="h-4 w-4"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                            </svg>
+                          )}
                         </button>
                       ) : null}
                     </div>
@@ -1518,8 +1759,9 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Accessible visually-hidden file input */}
+                  {/* Hidden file input controlled by dropdown */}
                   <input
+                    ref={chatFileInputRef}
                     id={chatFileInputId}
                     type="file"
                     multiple
@@ -1527,43 +1769,104 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                     onChange={(e) => void handleFileSelect(e, "chat")}
                     className="sr-only"
                   />
-                  <label
-                    htmlFor={chatFileInputId}
-                    className="cursor-pointer rounded-lg border border-zinc-300 px-3 py-2 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-                  >
-                    + Upload Files / Images / .md
-                  </label>
+                  <StudioUploadMenu
+                    isOpen={chatUploadMenuOpen}
+                    onToggle={() => setChatUploadMenuOpen((prev) => !prev)}
+                    onSelectAccept={handleSelectChatAccept}
+                  />
 
+                  {/* Microphone STT Button */}
                   <button
                     type="button"
                     onClick={() => void toggleVoiceRecording("chat")}
                     aria-pressed={isRecordingStt}
                     disabled={isTranscribingStt}
-                    className={`rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                    className={`inline-flex items-center justify-center rounded-full p-2.5 transition ${
                       isRecordingStt
-                        ? "border-red-500 bg-red-600 text-white"
-                        : "border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                        ? "bg-red-600 text-white shadow-md animate-pulse ring-4 ring-red-400/30"
+                        : isTranscribingStt
+                          ? "border border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                          : "border border-zinc-300 bg-white text-zinc-700 shadow-2xs hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
                     }`}
+                    title={
+                      isTranscribingStt
+                        ? "Transcribing voice…"
+                        : isRecordingStt
+                          ? "Stop recording"
+                          : "Speak to Adam (Voice STT)"
+                    }
                   >
-                    {isTranscribingStt
-                      ? "Transcribing…"
-                      : isRecordingStt
-                        ? "⏹ Stop Mic (Recording…)"
-                        : "🎤 Speak to Adam (STT)"}
+                    {isTranscribingStt ? (
+                      <svg
+                        className="h-4 w-4 animate-spin"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v8H4z"
+                        />
+                      </svg>
+                    ) : isRecordingStt ? (
+                      <div className="flex items-center gap-1.5 px-1">
+                        <span className="h-2 w-2 rounded-full bg-white animate-ping" />
+                        <span className="text-[11px] font-semibold">Recording…</span>
+                      </div>
+                    ) : (
+                      <svg
+                        className="h-4 w-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                        <line x1="12" y1="19" x2="12" y2="22" />
+                      </svg>
+                    )}
                   </button>
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {/* Draft Issue from Chat */}
                   <button
                     type="button"
                     disabled={isSendingChat}
                     onClick={() =>
                       void sendChatMessage({ forceCreateDraft: true })
                     }
-                    className="rounded-lg border border-zinc-300 px-3.5 py-2 text-xs font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3.5 py-2 text-xs font-medium text-zinc-700 shadow-2xs hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    title="Draft issue from chat into approval queue"
                   >
-                    Draft Issue from Chat
+                    <svg
+                      className="h-3.5 w-3.5 text-zinc-500"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                    <span>Draft Issue</span>
                   </button>
+
+                  {/* Send Button */}
                   <button
                     type="button"
                     disabled={
@@ -1571,9 +1874,28 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                       (!chatInput.trim() && chatAttachments.length === 0)
                     }
                     onClick={() => void sendChatMessage()}
-                    className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+                    className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-zinc-800 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                    title="Send message (Enter)"
                   >
-                    {isSendingChat ? "Sending…" : "Send"}
+                    {isSendingChat ? (
+                      <span>Sending…</span>
+                    ) : (
+                      <>
+                        <span>Send</span>
+                        <svg
+                          className="h-3.5 w-3.5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <line x1="22" y1="2" x2="11" y2="13" />
+                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                        </svg>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -1582,20 +1904,19 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
           {/* Voice & Multimodal Settings Sidebar */}
           <aside className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
-            <h2 className="text-base font-semibold">
-              Voice &amp; Multimodal Controls
-            </h2>
-            <p className="text-xs text-zinc-600 dark:text-zinc-400">
-              Configure how you and Adam use Speech-to-Text (STT) and
-              Text-to-Speech (TTS).
-            </p>
+            <div>
+              <h2 className="text-base font-semibold">Voice &amp; Audio</h2>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                Configure Adam&apos;s spoken replies and persona.
+              </p>
+            </div>
 
-            <div className="space-y-2 pt-2">
+            <div className="space-y-1.5 pt-1">
               <label
                 htmlFor="voice-engine-select"
-                className="block text-xs font-medium"
+                className="block text-xs font-medium text-zinc-700 dark:text-zinc-300"
               >
-                Voice Engine (STT &amp; TTS)
+                Voice Engine
               </label>
               <select
                 id="voice-engine-select"
@@ -1605,22 +1926,18 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                 }
                 className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-950"
               >
-                <option value="google">
-                  Google Voice (Gemini STT + Google/Gemini TTS)
-                </option>
-                <option value="browser">
-                  Local Browser Model (Web Speech API — Zero Latency)
-                </option>
+                <option value="google">Google Voice (Gemini STT &amp; TTS)</option>
+                <option value="browser">Browser Voice (Web Speech)</option>
               </select>
             </div>
 
             {voiceEngine === "google" ? (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label
                   htmlFor="google-voice-persona"
-                  className="block text-xs font-medium"
+                  className="block text-xs font-medium text-zinc-700 dark:text-zinc-300"
                 >
-                  Adam&apos;s Google Voice Persona
+                  Adam&apos;s Persona
                 </label>
                 <select
                   id="google-voice-persona"
@@ -1628,10 +1945,10 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                   onChange={(e) => setGoogleVoiceName(e.target.value)}
                   className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-950"
                 >
-                  <option value="Puck">Puck (Warm &amp; Conversational)</option>
-                  <option value="Charon">Charon (Deep &amp; Editorial)</option>
-                  <option value="Fenrir">Fenrir (Direct &amp; Crisp)</option>
-                  <option value="Aoede">Aoede (Expressive &amp; Clear)</option>
+                  <option value="Puck">Puck (Warm)</option>
+                  <option value="Charon">Charon (Editorial)</option>
+                  <option value="Fenrir">Fenrir (Crisp)</option>
+                  <option value="Aoede">Aoede (Expressive)</option>
                 </select>
               </div>
             ) : null}
@@ -1644,20 +1961,19 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                 onChange={(e) => setAutoSpeakReplies(e.target.checked)}
                 className="h-4 w-4 rounded accent-zinc-900"
               />
-              <label htmlFor="auto-speak-toggle" className="text-xs">
-                Automatically speak Adam&apos;s replies aloud (TTS)
+              <label
+                htmlFor="auto-speak-toggle"
+                className="text-xs text-zinc-700 dark:text-zinc-300"
+              >
+                Speak Adam&apos;s replies aloud (TTS)
               </label>
             </div>
 
-            <div className="border-t border-zinc-200 pt-4 text-xs text-zinc-500 dark:border-zinc-800">
-              <p className="font-medium text-zinc-700 dark:text-zinc-300">
-                Supported Reference Uploads:
-              </p>
-              <ul className="mt-1.5 list-disc space-y-1 pl-4">
-                <li>Markdown &amp; Text (`.md`, `.mdx`, `.txt`, `.csv`, `.json`)</li>
-                <li>Images (PNG, JPEG, WebP, GIF)</li>
-                <li>Documents (PDF) &amp; Audio notes (WebM, WAV, MP3)</li>
-              </ul>
+            <div className="border-t border-zinc-200 pt-3 text-[11px] text-zinc-400 dark:border-zinc-800">
+              <span className="font-medium text-zinc-600 dark:text-zinc-400">
+                Accepted Uploads:
+              </span>{" "}
+              Images (PNG, JPG, WebP) · Docs (PDF) · Text &amp; Markdown
             </div>
           </aside>
         </section>
@@ -1805,6 +2121,42 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                     <button
                       type="button"
                       onClick={() =>
+                        setIdeaContent(
+                          (prev) => `${prev} [button: Read More →](https://creativeplatform.xyz) `,
+                        )
+                      }
+                      className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                      title="Insert Button"
+                    >
+                      🔘 Button
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIdeaContent(
+                          (prev) => `${prev} [share: Share this Issue ↗](https://twitter.com/intent/tweet?text=Check%20out%20this%20issue%20of%20Dear%20Creative) `,
+                        )
+                      }
+                      className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                      title="Insert Share Button"
+                    >
+                      📢 Share
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIdeaContent(
+                          (prev) => `${prev} [subscribe: Subscribe to Dear Creative →](/#subscribe) `,
+                        )
+                      }
+                      className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                      title="Insert Subscribe Button"
+                    >
+                      ✉️ Subscribe
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
                         setIdeaContent((prev) => `${prev}\n\`\`\`\ncode\n\`\`\`\n`)
                       }
                       className="rounded px-2 py-0.5 font-mono hover:bg-zinc-200 dark:hover:bg-zinc-800"
@@ -1844,18 +2196,18 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
               <div>
                 <input
                   id={ideaFileInputId}
+                  ref={ideaFileInputRef}
                   type="file"
                   multiple
                   accept="image/*,application/pdf,text/*,.md,.mdx,.csv,.json"
                   onChange={(e) => void handleFileSelect(e, "idea")}
                   className="sr-only"
                 />
-                <label
-                  htmlFor={ideaFileInputId}
-                  className="inline-block cursor-pointer rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-                >
-                  + Attach Reference Images / .md / Files
-                </label>
+                <StudioUploadMenu
+                  isOpen={ideaUploadMenuOpen}
+                  onToggle={() => setIdeaUploadMenuOpen((prev) => !prev)}
+                  onSelectAccept={handleSelectIdeaAccept}
+                />
 
                 {ideaAttachments.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -2405,6 +2757,45 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                         onClick={() =>
                           setEditPostMarkdown(
                             (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}[button: Explore Now →](https://creativeplatform.xyz)\n\n`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Custom Button"
+                      >
+                        🔘 Button
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}[share: Share on X ↗](https://twitter.com/intent/tweet?text=Check%20out%20this%20issue%20from%20Dear%20Creative)\n\n`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Share Button"
+                      >
+                        📢 Share
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}[subscribe: Subscribe to Dear Creative →](/#subscribe)\n\n`,
+                          )
+                        }
+                        className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Subscribe Button"
+                      >
+                        ✉️ Subscribe
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditPostMarkdown(
+                            (prev) =>
                               `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}---\n\n`,
                           )
                         }
@@ -2779,12 +3170,19 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
             </p>
 
             <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-xs space-y-2 dark:border-zinc-800 dark:bg-zinc-950">
-              <div className="flex justify-between">
+              <div className="flex items-start justify-between gap-4">
                 <span className="text-zinc-500">Current Schedule:</span>
-                <span className="font-mono font-medium">
-                  {schedule?.cronExpression ?? scheduleCron} (
-                  {schedule?.timezone ?? scheduleTimezone})
-                </span>
+                <div className="text-right">
+                  <div className="font-medium text-zinc-900 dark:text-zinc-100">
+                    {formatCronToHuman(
+                      schedule?.cronExpression ?? scheduleCron,
+                      schedule?.timezone ?? scheduleTimezone,
+                    )}
+                  </div>
+                  <div className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {schedule?.cronExpression ?? scheduleCron} ({schedule?.timezone ?? scheduleTimezone})
+                  </div>
+                </div>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-500">Queued Ideas Ready:</span>

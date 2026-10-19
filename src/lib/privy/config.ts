@@ -15,12 +15,16 @@ export function getPrivyAdminUserIds(): Set<string> {
   if (!raw) {
     return new Set();
   }
-  return new Set(
-    raw
-      .split(",")
-      .map((id) => id.trim())
-      .filter(Boolean),
-  );
+  const set = new Set<string>();
+  for (const item of raw.split(",").map((id) => id.trim()).filter(Boolean)) {
+    set.add(item);
+    if (item.startsWith("did:privy:")) {
+      set.add(item.slice("did:privy:".length));
+    } else {
+      set.add(`did:privy:${item}`);
+    }
+  }
+  return set;
 }
 
 export function isPrivyConfigured(): boolean {

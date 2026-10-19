@@ -7,6 +7,7 @@ export function AdminConsole() {
   const {
     ready,
     authenticated,
+    user,
     login,
     logout,
     getAccessToken,
@@ -68,11 +69,22 @@ export function AdminConsole() {
         </button>
       ) : (
         <div className="space-y-3">
-          <button
-            type="button"
-            onClick={() => {
-              void refreshSession();
-            }}
+          {user ? (
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
+              <span className="font-semibold text-zinc-600 dark:text-zinc-400">
+                Your Privy User ID (DID):
+              </span>{" "}
+              <code className="select-all font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                {user.id}
+              </code>
+            </div>
+          ) : null}
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                void refreshSession();
+              }}
             className="rounded-full border border-zinc-300 px-5 py-2.5 text-sm font-medium"
           >
             Verify server session
@@ -91,7 +103,8 @@ export function AdminConsole() {
             Open Adam Studio →
           </a>
         </div>
-      )}
+      </div>
+    )}
       {session ? (
         <pre className="rounded-lg bg-zinc-100 p-4 text-sm dark:bg-zinc-900">
           {JSON.stringify(session, null, 2)}
