@@ -185,7 +185,6 @@ export function AdminConsole() {
           </div>
         </div>
       ) : null}
-
       {session ? (
         <pre className="rounded-xl bg-zinc-100 p-4 text-xs dark:bg-zinc-900">
           {JSON.stringify(session, null, 2)}

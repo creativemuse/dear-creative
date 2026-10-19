@@ -166,4 +166,3 @@ export function AppProviders({ privyAppId, children }: AppProvidersProps) {
     </AuthRuntimeConfigContext.Provider>
   );
 }
-

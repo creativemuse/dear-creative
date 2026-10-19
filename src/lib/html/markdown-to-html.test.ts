@@ -70,7 +70,8 @@ describe("renderMarkdownToSafeHtml & ensureArticleHtml", () => {
   });
 
   it("converts standalone X.com and twitter.com links into embedded X cards", () => {
-    const md = "Check out this dispatch:\n\nhttps://x.com/dearcreative/status/18480392817291028\n\nMore notes below.";
+    const md =
+      "Check out this dispatch:\n\nhttps://x.com/dearcreative/status/18480392817291028\n\nMore notes below.";
     const html = renderMarkdownToSafeHtml(md);
 
     expect(html).toContain('class="twitter-tweet dear-x-card"');
@@ -80,7 +81,8 @@ describe("renderMarkdownToSafeHtml & ensureArticleHtml", () => {
   });
 
   it("autolinks and styles inline X.com profile and post links", () => {
-    const md = "Follow our updates on https://x.com/dearcreative or read [the thread](https://twitter.com/dearcreative/status/123).";
+    const md =
+      "Follow our updates on https://x.com/dearcreative or read [the thread](https://twitter.com/dearcreative/status/123).";
     const html = renderMarkdownToSafeHtml(md);
 
     expect(html).toContain('class="dear-x-link"');
