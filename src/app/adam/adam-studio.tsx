@@ -549,22 +549,45 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
       if (postsRes.ok) {
         const data = (await postsRes.json()) as { posts: AdminPostRecord[] };
-        const loadedPosts = data.posts ?? [];
-        setAdminPosts(loadedPosts);
-        if (loadedPosts.length > 0) {
-          const targetSlug = requestedSlugRef.current;
-          if (targetSlug) {
-            const match = loadedPosts.find(
-              (p) => p.slug === targetSlug || p.id === targetSlug,
-            );
-            if (match) {
-              selectPostForEditing(match);
-              requestedSlugRef.current = null;
+        let loadedPosts = data.posts ?? [];
+        const targetSlug = requestedSlugRef.current;
+        if (targetSlug) {
+          let match = loadedPosts.find(
+            (p) => p.slug === targetSlug || p.id === targetSlug,
+          );
+          if (!match) {
+            try {
+              const singleRes = await authFetch(
+                `/api/adam/posts?slug=${encodeURIComponent(targetSlug)}`,
+              );
+              if (singleRes.ok) {
+                const singleData = (await singleRes.json()) as {
+                  post?: AdminPostRecord;
+                };
+                if (singleData.post) {
+                  match = singleData.post;
+                  loadedPosts = [
+                    match,
+                    ...loadedPosts.filter((p) => p.id !== match!.id),
+                  ];
+                }
+              }
+            } catch {
+              // Ignore single post fetch error
             }
-          } else if (!selectedEditPostIdRef.current) {
+          }
+          if (match) {
+            selectPostForEditing(match);
+            requestedSlugRef.current = null;
+          } else if (loadedPosts.length > 0 && !selectedEditPostIdRef.current) {
             selectPostForEditing(loadedPosts[0]!);
           }
+        } else if (loadedPosts.length > 0 && !selectedEditPostIdRef.current) {
+          selectPostForEditing(loadedPosts[0]!);
         }
+        setAdminPosts(loadedPosts);
+      } else if (postsRes.status === 401 || postsRes.status === 403) {
+        console.warn(`Posts endpoint unauthorized (status ${postsRes.status})`);
       }
 
       if (threadsRes.ok) {
@@ -629,6 +652,51 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     }, 0);
     return () => clearTimeout(timer);
   }, [ready, authenticated, studioToken, loadStudioData]);
+
+  // Sync tab & slug from URL (e.g. from OwnerEditPostButton or browser navigation)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncFromUrl = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      const slugParam = params.get("slug")?.trim();
+
+      if (tabParam === "posts" || slugParam) {
+        setActiveTab("posts");
+      }
+
+      if (slugParam && slugParam !== selectedEditPostIdRef.current) {
+        const match = adminPosts.find(
+          (p) => p.slug === slugParam || p.id === slugParam,
+        );
+        if (match) {
+          selectPostForEditing(match);
+        } else {
+          try {
+            const res = await authFetch(
+              `/api/adam/posts?slug=${encodeURIComponent(slugParam)}`,
+            );
+            if (res.ok) {
+              const data = (await res.json()) as { post?: AdminPostRecord };
+              if (data.post) {
+                setAdminPosts((prev) => {
+                  if (prev.some((p) => p.id === data.post!.id)) return prev;
+                  return [data.post!, ...prev];
+                });
+                selectPostForEditing(data.post);
+              }
+            }
+          } catch {
+            // Ignore single post load error
+          }
+        }
+      }
+    };
+
+    void syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, [adminPosts, authFetch, selectPostForEditing]);
 
   const handleSaveStudioToken = useCallback(
     (e: FormEvent) => {

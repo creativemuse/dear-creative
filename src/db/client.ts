@@ -9,11 +9,9 @@ export type DearCreativeDb = LibSQLDatabase<typeof schema>;
 let cached: DearCreativeDb | null = null;
 
 export function resolveDatabaseUrl(): string {
-  return (
-    process.env.TURSO_DATABASE_URL ??
-    process.env.LOCAL_DATABASE_URL ??
-    "file:./data/dear-creative.db"
-  );
+  const turso = process.env.TURSO_DATABASE_URL?.trim();
+  const local = process.env.LOCAL_DATABASE_URL?.trim();
+  return turso || local || "file:./data/dear-creative.db";
 }
 
 export function isLocalLibsqlUrl(url: string): boolean {

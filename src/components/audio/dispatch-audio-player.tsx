@@ -31,6 +31,7 @@ export function DispatchAudioPlayer({
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCacheRef = useRef<Record<string, string>>({});
+  const currentVoiceRef = useRef<GoogleVoice>("Puck");
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
 
@@ -49,25 +50,60 @@ export function DispatchAudioPlayer({
     };
   }, []);
 
-  // Fallback to native Web Speech API
-  const fallbackToBrowserSpeech = useCallback(() => {
-    setUseBrowserSpeech(true);
-    setStatusMessage(null);
-    setIsLoading(false);
+  // Fallback to native Web Speech API with pitch/voice differentiation
+  const fallbackToBrowserSpeech = useCallback(
+    (voiceToUse: GoogleVoice = voice) => {
+      setUseBrowserSpeech(true);
+      setStatusMessage(null);
+      setIsLoading(false);
 
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(plainText);
-      utterance.rate = playbackRate;
-      utterance.onend = () => {
-        setIsPlaying(false);
-        setCurrentTime(0);
-      };
-      utteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
-      setIsPlaying(true);
-    }
-  }, [plainText, playbackRate]);
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(plainText);
+        utterance.rate = playbackRate;
+        utterance.pitch = voiceToUse === "Aoede" ? 1.15 : 0.9;
+
+        const voices = window.speechSynthesis.getVoices?.() || [];
+        if (voices.length > 0) {
+          const isAoede = voiceToUse === "Aoede";
+          const match = voices.find((v) => {
+            const nameLower = v.name.toLowerCase();
+            if (isAoede) {
+              return (
+                (nameLower.includes("female") ||
+                  nameLower.includes("samantha") ||
+                  nameLower.includes("victoria") ||
+                  nameLower.includes("zira") ||
+                  nameLower.includes("karen") ||
+                  nameLower.includes("jenny")) &&
+                v.lang.startsWith("en")
+              );
+            }
+            return (
+              (nameLower.includes("male") ||
+                nameLower.includes("daniel") ||
+                nameLower.includes("david") ||
+                nameLower.includes("alex") ||
+                nameLower.includes("guy")) &&
+              v.lang.startsWith("en")
+            );
+          });
+          if (match) {
+            utterance.voice = match;
+          }
+        }
+
+        utterance.onend = () => {
+          setIsPlaying(false);
+          setCurrentTime(0);
+        };
+        utteranceRef.current = utterance;
+        window.speechSynthesis.speak(utterance);
+        setIsPlaying(true);
+      }
+    },
+    [plainText, playbackRate, voice],
+  );
 
   // Attach audio element listeners
   const setupAudioElement = useCallback(
@@ -91,10 +127,100 @@ export function DispatchAudioPlayer({
 
       audio.onerror = () => {
         console.warn("Audio playback error, switching to Web Speech fallback");
-        fallbackToBrowserSpeech();
+        fallbackToBrowserSpeech(currentVoiceRef.current);
       };
     },
     [playbackRate, fallbackToBrowserSpeech],
+  );
+
+  // Play target voice (from cache or Google Voice Engine)
+  const playVoice = useCallback(
+    async (targetVoice: GoogleVoice, startOffsetSec = 0) => {
+      currentVoiceRef.current = targetVoice;
+
+      // 1. Check in-memory audio cache for target voice
+      const cachedSrc = audioCacheRef.current[targetVoice];
+      if (cachedSrc) {
+        if (!audioRef.current) {
+          audioRef.current = new Audio(cachedSrc);
+        } else {
+          audioRef.current.src = cachedSrc;
+        }
+        setupAudioElement(audioRef.current);
+        audioRef.current.playbackRate = playbackRate;
+        if (startOffsetSec > 0) {
+          audioRef.current.currentTime = startOffsetSec;
+        } else {
+          audioRef.current.currentTime = 0;
+        }
+        try {
+          await audioRef.current.play();
+          setIsPlaying(true);
+          setStatusMessage(null);
+        } catch (err) {
+          console.warn("Cached audio playback failed:", err);
+          fallbackToBrowserSpeech(targetVoice);
+        }
+        return;
+      }
+
+      // 2. Fetch synthesized narration from Google Voice Engine
+      setIsLoading(true);
+      setStatusMessage(
+        `Synthesizing narration with ${targetVoice === "Puck" ? "Adam (Puck)" : "Aoede"}...`,
+      );
+
+      try {
+        const res = await fetch(
+          `/api/posts/${encodeURIComponent(slug)}/audio?voice=${encodeURIComponent(targetVoice)}`,
+        );
+
+        if (!res.ok) {
+          throw new Error(`Audio route returned HTTP ${res.status}`);
+        }
+
+        const data = (await res.json()) as {
+          audioBase64?: string;
+          mimeType?: string;
+          provider?: string;
+          fallbackToLocalWebSpeech?: boolean;
+          error?: string;
+        };
+
+        if (data.audioBase64) {
+          const audioSrc = `data:${data.mimeType || "audio/mp3"};base64,${data.audioBase64}`;
+          audioCacheRef.current[targetVoice] = audioSrc;
+
+          // Only proceed if user hasn't switched away while fetching
+          if (currentVoiceRef.current === targetVoice) {
+            if (!audioRef.current) {
+              audioRef.current = new Audio(audioSrc);
+            } else {
+              audioRef.current.src = audioSrc;
+            }
+
+            setupAudioElement(audioRef.current);
+            audioRef.current.playbackRate = playbackRate;
+            if (startOffsetSec > 0) {
+              audioRef.current.currentTime = startOffsetSec;
+            } else {
+              audioRef.current.currentTime = 0;
+            }
+            await audioRef.current.play();
+            setIsPlaying(true);
+            setStatusMessage(null);
+          }
+        } else {
+          fallbackToBrowserSpeech(targetVoice);
+        }
+      } catch (err) {
+        console.warn("Google Voice synthesis unavailable, falling back to Web Speech:", err);
+        fallbackToBrowserSpeech(targetVoice);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [slug, playbackRate, fallbackToBrowserSpeech, setupAudioElement],
   );
 
   // Toggle play/pause
@@ -119,16 +245,17 @@ export function DispatchAudioPlayer({
           window.speechSynthesis.resume();
           setIsPlaying(true);
         } else {
-          fallbackToBrowserSpeech();
+          fallbackToBrowserSpeech(voice);
         }
       }
       return;
     }
 
-    // 3. If audio is already loaded and paused, resume playback
+    // 3. If audio is already loaded FOR CURRENT VOICE and paused, resume playback
     if (
       audioRef.current &&
       audioRef.current.src &&
+      currentVoiceRef.current === voice &&
       audioRef.current.currentTime > 0 &&
       !audioRef.current.ended
     ) {
@@ -138,74 +265,15 @@ export function DispatchAudioPlayer({
       return;
     }
 
-    // 4. Check in-memory audio cache for current voice
-    const cachedSrc = audioCacheRef.current[voice];
-    if (cachedSrc) {
-      if (!audioRef.current) {
-        audioRef.current = new Audio(cachedSrc);
-      } else {
-        audioRef.current.src = cachedSrc;
-      }
-      setupAudioElement(audioRef.current);
-      audioRef.current.currentTime = 0;
-      await audioRef.current.play();
-      setIsPlaying(true);
-      return;
-    }
-
-    // 5. Fetch synthesized narration from Google Voice Engine
-    setIsLoading(true);
-    setStatusMessage("Synthesizing narration with Google Voice...");
-
-    try {
-      const res = await fetch(
-        `/api/posts/${encodeURIComponent(slug)}/audio?voice=${encodeURIComponent(voice)}`,
-      );
-
-      if (!res.ok) {
-        throw new Error(`Audio route returned HTTP ${res.status}`);
-      }
-
-      const data = (await res.json()) as {
-        audioBase64?: string;
-        mimeType?: string;
-        provider?: string;
-        fallbackToLocalWebSpeech?: boolean;
-        error?: string;
-      };
-
-      if (data.audioBase64) {
-        const audioSrc = `data:${data.mimeType || "audio/mp3"};base64,${data.audioBase64}`;
-        audioCacheRef.current[voice] = audioSrc;
-
-        if (!audioRef.current) {
-          audioRef.current = new Audio(audioSrc);
-        } else {
-          audioRef.current.src = audioSrc;
-        }
-
-        setupAudioElement(audioRef.current);
-        audioRef.current.currentTime = 0;
-        await audioRef.current.play();
-        setIsPlaying(true);
-        setStatusMessage(null);
-      } else {
-        fallbackToBrowserSpeech();
-      }
-    } catch (err) {
-      console.warn("Google Voice synthesis unavailable, falling back to Web Speech:", err);
-      fallbackToBrowserSpeech();
-    } finally {
-      setIsLoading(false);
-    }
+    // 4. Otherwise start playback for current voice
+    await playVoice(voice, 0);
   }, [
     isPlaying,
     useBrowserSpeech,
     voice,
-    slug,
     playbackRate,
     fallbackToBrowserSpeech,
-    setupAudioElement,
+    playVoice,
   ]);
 
   // Handle speed change (1x -> 1.25x -> 1.5x)
@@ -220,28 +288,54 @@ export function DispatchAudioPlayer({
 
     if (useBrowserSpeech && isPlaying && typeof window !== "undefined") {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(plainText);
-      utterance.rate = nextRate;
-      utterance.onend = () => setIsPlaying(false);
-      utteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
+      fallbackToBrowserSpeech(voice);
     }
   };
 
-  // Switch voice between Puck and Aoede
-  const handleVoiceToggle = () => {
+  // Switch voice between Puck (Adam) and Aoede
+  const handleVoiceToggle = useCallback(async () => {
     const nextVoice: GoogleVoice = voice === "Puck" ? "Aoede" : "Puck";
     setVoice(nextVoice);
+    currentVoiceRef.current = nextVoice;
 
-    // If currently active, reset and re-cue with the new voice
+    if (useBrowserSpeech) {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        if (isPlaying) {
+          fallbackToBrowserSpeech(nextVoice);
+        }
+      }
+      return;
+    }
+
+    // If currently playing, seamlessly switch to next voice and resume at same position
     if (isPlaying) {
+      const resumeTime = audioRef.current?.currentTime || currentTime || 0;
       if (audioRef.current) {
         audioRef.current.pause();
       }
-      setIsPlaying(false);
+      await playVoice(nextVoice, resumeTime);
+    } else {
+      // If paused or idle, cue the next voice so pressing play starts the new voice
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        const cached = audioCacheRef.current[nextVoice];
+        if (cached) {
+          audioRef.current.src = cached;
+          audioRef.current.load();
+        }
+      }
       setCurrentTime(0);
     }
-  };
+  }, [
+    voice,
+    useBrowserSpeech,
+    isPlaying,
+    currentTime,
+    fallbackToBrowserSpeech,
+    playVoice,
+  ]);
 
   // Scrubbable timeline seek handler
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
