@@ -952,10 +952,14 @@ export async function synthesizeSpeechWithGoogle(input: {
     // Fall through to Cloud TTS
   }
 
-  // 2. Fallback to Google Cloud Text-to-Speech v1 REST endpoint
+  // 3. Fallback to Google Cloud Text-to-Speech v1 REST endpoint
   const cloudTtsUrl = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(
     apiKey,
   )}`;
+  const isAoede = voiceName.toLowerCase() === "aoede";
+  const cloudVoiceName = isAoede ? "en-US-Journey-F" : "en-US-Journey-D";
+  const cloudSsmlGender = isAoede ? "FEMALE" : "MALE";
+
   const cloudRes = await fetchImpl(cloudTtsUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -963,7 +967,8 @@ export async function synthesizeSpeechWithGoogle(input: {
       input: { text: cleanText.slice(0, 5000) },
       voice: {
         languageCode: "en-US",
-        name: "en-US-Journey-D",
+        name: cloudVoiceName,
+        ssmlGender: cloudSsmlGender,
       },
       audioConfig: {
         audioEncoding: "MP3",
