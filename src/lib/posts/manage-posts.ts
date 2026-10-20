@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { desc, eq, or } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
 import { approvals, posts, type PostStatus } from "@/db/schema";
@@ -6,6 +7,7 @@ import { computeApprovalContentHash } from "@/lib/approval/content-hash";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { htmlToMarkdown } from "@/lib/html/html-to-markdown";
 import { ensureArticleHtml } from "@/lib/html/markdown-to-html";
+import { loadFullPostContent } from "@/lib/paywall/full-post-content";
 
 export type AdminPostRecord = {
   id: string;
@@ -94,7 +96,34 @@ export async function getAdminPostByIdOrSlug(
     .where(or(eq(posts.id, trimmed), eq(posts.slug, trimmed)))
     .limit(1);
 
-  return row ? toAdminPostRecord(row) : null;
+  if (row) {
+    return toAdminPostRecord(row);
+  }
+
+  // Fallback to static MDX content (e.g. hello-dear-creative)
+  const lookupSlug = trimmed.startsWith("content:") ? trimmed.slice(8) : trimmed;
+  const fullContent = await loadFullPostContent(lookupSlug, db);
+  if (fullContent) {
+    return {
+      id: `content:${fullContent.slug}`,
+      slug: fullContent.slug,
+      title: fullContent.title,
+      status: "published",
+      publishedAt: fullContent.publishedAt,
+      teaserText: fullContent.excerpt ?? null,
+      emailSubject: `Dear Creative: ${fullContent.title}`,
+      emailHtml: fullContent.bodyHtml ?? null,
+      bodyHtml: fullContent.bodyHtml ?? null,
+      markdown: fullContent.body,
+      canonicalUrl: `https://news.creativeplatform.xyz/posts/${fullContent.slug}`,
+      source: "content-mdx",
+      sponsorId: null,
+      createdAt: fullContent.publishedAt,
+      updatedAt: fullContent.publishedAt,
+    };
+  }
+
+  return null;
 }
 
 export async function updateAdminPost(
@@ -111,7 +140,78 @@ export async function updateAdminPost(
     .limit(1);
 
   if (!existing) {
-    return null;
+    const lookupSlug = trimmedKey.startsWith("content:")
+      ? trimmedKey.slice(8)
+      : trimmedKey;
+    const fullContent = await loadFullPostContent(lookupSlug, db);
+    if (!fullContent) {
+      return null;
+    }
+
+    const newId = randomUUID();
+    const nextTitle =
+      input.title !== undefined ? input.title.trim() : fullContent.title;
+    if (!nextTitle) {
+      throw new Error("Post title cannot be empty");
+    }
+    const nextSlug =
+      input.slug !== undefined
+        ? input.slug
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9-]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+        : fullContent.slug;
+    if (!nextSlug) {
+      throw new Error("Post slug cannot be empty");
+    }
+
+    let nextBodyHtml = fullContent.bodyHtml ?? null;
+    if (input.markdown !== undefined && input.markdown !== null) {
+      nextBodyHtml = ensureArticleHtml(input.markdown);
+    } else if (input.bodyHtml !== undefined) {
+      nextBodyHtml = input.bodyHtml ? ensureArticleHtml(input.bodyHtml) : null;
+    }
+
+    const nextStatus: PostStatus = input.status ?? "published";
+    const nextTeaserText =
+      input.teaserText !== undefined
+        ? input.teaserText?.trim() || null
+        : fullContent.excerpt ?? null;
+    const nextEmailSubject =
+      input.emailSubject !== undefined
+        ? input.emailSubject?.trim() || null
+        : `Dear Creative: ${nextTitle}`;
+
+    await db.insert(posts).values({
+      id: newId,
+      slug: nextSlug,
+      title: nextTitle,
+      status: nextStatus,
+      publishedAt: new Date(fullContent.publishedAt || Date.now()),
+      teaserText: nextTeaserText,
+      emailSubject: nextEmailSubject,
+      emailHtml: nextBodyHtml,
+      bodyHtml: nextBodyHtml,
+      source: "paragraph",
+    });
+
+    const [created] = await db
+      .select()
+      .from(posts)
+      .where(eq(posts.id, newId))
+      .limit(1);
+    if (!created) return null;
+
+    await writeAuditEvent(db, {
+      actor,
+      action: "post.create_from_content",
+      entityType: "post",
+      entityId: newId,
+      payload: { slug: nextSlug, title: nextTitle },
+    });
+
+    return { post: toAdminPostRecord(created), previousSlug: fullContent.slug };
   }
 
   const nextTitle =
