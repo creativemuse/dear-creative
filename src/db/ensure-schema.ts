@@ -102,6 +102,14 @@ const ADDITIVE_POST_COLUMNS: Array<{ name: string; ddl: string }> = [
     name: "gate_price_usdc",
     ddl: "ALTER TABLE posts ADD gate_price_usdc real DEFAULT 1",
   },
+  {
+    name: "audio_url",
+    ddl: "ALTER TABLE posts ADD audio_url text",
+  },
+  {
+    name: "audio_voice",
+    ddl: "ALTER TABLE posts ADD audio_voice text",
+  },
 ];
 
 async function runEnsurePostsSchema(db: DearCreativeDb): Promise<void> {
@@ -153,4 +161,51 @@ export function ensurePostsSchema(db: DearCreativeDb): Promise<void> {
     ensuredDbs.set(db, pending);
   }
   return pending;
+}
+
+export async function getPostAudioColumns(
+  db: DearCreativeDb,
+  postIdOrSlug: string,
+): Promise<{ audioUrl: string | null; audioVoice: string | null }> {
+  await ensurePostsSchema(db);
+  try {
+    const rows = await db.all<{
+      audio_url?: string | null;
+      audio_voice?: string | null;
+    }>(
+      sql`SELECT audio_url, audio_voice FROM posts WHERE id = ${postIdOrSlug} OR slug = ${postIdOrSlug} LIMIT 1`,
+    );
+    const row = rows[0];
+    return {
+      audioUrl: row?.audio_url ?? null,
+      audioVoice: row?.audio_voice ?? null,
+    };
+  } catch {
+    return { audioUrl: null, audioVoice: null };
+  }
+}
+
+export async function setPostAudioColumns(
+  db: DearCreativeDb,
+  postId: string,
+  audio: { audioUrl?: string | null; audioVoice?: string | null },
+): Promise<void> {
+  await ensurePostsSchema(db);
+  try {
+    if (audio.audioUrl !== undefined && audio.audioVoice !== undefined) {
+      await db.run(
+        sql`UPDATE posts SET audio_url = ${audio.audioUrl}, audio_voice = ${audio.audioVoice} WHERE id = ${postId}`,
+      );
+    } else if (audio.audioUrl !== undefined) {
+      await db.run(
+        sql`UPDATE posts SET audio_url = ${audio.audioUrl} WHERE id = ${postId}`,
+      );
+    } else if (audio.audioVoice !== undefined) {
+      await db.run(
+        sql`UPDATE posts SET audio_voice = ${audio.audioVoice} WHERE id = ${postId}`,
+      );
+    }
+  } catch {
+    // Non-fatal if running against a read-only replica
+  }
 }

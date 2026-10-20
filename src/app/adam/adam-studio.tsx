@@ -37,6 +37,7 @@ import {
   resolvePostCoverImage,
 } from "@/lib/posts/post-cover-image";
 import { resolveGroveOrIpfsUrl } from "@/lib/storage/lens-grove";
+import { NARRATION_VOICES, voiceLabel } from "@/lib/audio/narration-voices";
 
 export type StudioTab = "chat" | "ideas" | "posts" | "approvals" | "schedule";
 type VoiceEngineMode = "google" | "browser";
@@ -417,7 +418,20 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   const [editPostHtml, setEditPostHtml] = useState("");
   const [editPostBanner, setEditPostBanner] = useState("");
   const [isUploadingBanner, setIsUploadingBanner] = useState(false);
+  const [aiBannerPrompt, setAiBannerPrompt] = useState("");
+  const [aiBannerAspectRatio, setAiBannerAspectRatio] = useState<
+    "16:9" | "1:1" | "21:9"
+  >("16:9");
+  const [isGeneratingBanner, setIsGeneratingBanner] = useState(false);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
+  const [isExportingNotebook, setIsExportingNotebook] = useState(false);
+  // Pre-generated narration (static MP3 on Lens Grove)
+  const [editPostAudioUrl, setEditPostAudioUrl] = useState("");
+  const [editPostAudioVoice, setEditPostAudioVoice] = useState("");
+  const [narrationVoice, setNarrationVoice] = useState<string>("Puck");
+  const [isGeneratingNarration, setIsGeneratingNarration] = useState(false);
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
   const [editPostMode, setEditPostMode] = useState<PostEditorMode>("markdown");
   const [isSavingPost, setIsSavingPost] = useState(false);
   const [isPolishingPost, setIsPolishingPost] = useState(false);
@@ -477,6 +491,11 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     setEditPostBanner(
       initialBanner.startsWith("data:image/svg") ? "" : initialBanner,
     );
+    setEditPostAudioUrl(post.audioUrl ?? "");
+    setEditPostAudioVoice(post.audioVoice ?? "");
+    if (post.audioVoice) {
+      setNarrationVoice(post.audioVoice);
+    }
   }, []);
 
   const authFetch = useCallback(
@@ -1199,13 +1218,20 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
   // --- Send Chat to Adam ---
   const sendChatMessage = useCallback(
-    async (options: { forceCreateDraft?: boolean } = {}) => {
+    async (
+      options: {
+        forceCreateDraft?: boolean;
+        forceGenerateBanner?: boolean;
+      } = {},
+    ) => {
       const trimmed = chatInput.trim();
       const promptText =
         trimmed ||
-        (options.forceCreateDraft
-          ? "Please turn our discussion and attached references into a draft newsletter issue in the approval queue."
-          : "");
+        (options.forceGenerateBanner
+          ? "Please generate a custom Dear Creative banner image for our current issue topic and upload it to Lens Grove."
+          : options.forceCreateDraft
+            ? "Please turn our discussion and attached references into a draft newsletter issue in the approval queue."
+            : "");
       if (!promptText && chatAttachments.length === 0) return;
 
       const userMessage: StudioChatMessage = {
@@ -1238,6 +1264,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
             history: messages,
             attachments: currentAttachments,
             forceCreateDraft: Boolean(options.forceCreateDraft),
+            forceGenerateBanner: Boolean(options.forceGenerateBanner),
           }),
         });
 
@@ -1249,6 +1276,10 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
             approvalId: string;
             slug: string;
             title: string;
+          } | null;
+          generatedBanner?: {
+            url: string;
+            uri: string;
           } | null;
           error?: string;
         };
@@ -1285,6 +1316,11 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
             text: `Adam created draft "${data.createdDraft.title}" in the Approval Queue!`,
           });
           await loadStudioData();
+        } else if (data.generatedBanner) {
+          setStatusBanner({
+            kind: "success",
+            text: `Adam generated a new banner and uploaded it to Lens Grove (${data.generatedBanner.uri})!`,
+          });
         }
       } catch {
         setStatusBanner({
@@ -1605,6 +1641,335 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     },
     [authFetch, editPostTitle, handleApplyBanner],
   );
+
+  // --- Generate Banner Image with AI (Gemini / Imagen -> Lens Grove) ---
+  const handleGenerateBannerWithAi = useCallback(async () => {
+    setIsGeneratingBanner(true);
+    setStatusBanner(null);
+    try {
+      const res = await authFetch("/api/adam/banners/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: aiBannerPrompt.trim() || null,
+          title: editPostTitle.trim() || "Dear Creative Dispatch",
+          teaserText: editPostTeaser.trim() || null,
+          slug: editPostSlug.trim() || null,
+          postId: selectedEditPostId || null,
+          aspectRatio: aiBannerAspectRatio,
+          applyToPost: false,
+        }),
+      });
+      const data = (await res.json()) as {
+        url?: string;
+        uri?: string;
+        provider?: string;
+        error?: string;
+        details?: string;
+      };
+      if (!res.ok || !data.url) {
+        throw new Error(
+          data.details || data.error || "AI banner generation failed",
+        );
+      }
+      handleApplyBanner(data.url, editPostTitle || "Dear Creative Banner");
+      setStatusBanner({
+        kind: "success",
+        text: `Generated banner (${data.provider || "AI"}) and uploaded to Lens Grove (${data.uri || data.url})! Click "Save & Update Post" to publish.`,
+      });
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "AI banner generation failed";
+      setStatusBanner({
+        kind: "error",
+        text: msg,
+      });
+    } finally {
+      setIsGeneratingBanner(false);
+    }
+  }, [
+    aiBannerAspectRatio,
+    aiBannerPrompt,
+    authFetch,
+    editPostSlug,
+    editPostTeaser,
+    editPostTitle,
+    handleApplyBanner,
+    selectedEditPostId,
+    setStatusBanner,
+  ]);
+
+  // --- Upload or Generate Video (Veo / Lens Grove MP4) ---
+  const handleUploadVideoToGrove = useCallback(
+    async (file: File) => {
+      setIsGeneratingVideo(true);
+      setStatusBanner(null);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await authFetch("/api/adam/videos/generate", {
+          method: "POST",
+          body: formData,
+        });
+        const data = (await res.json()) as {
+          url?: string;
+          uri?: string;
+          error?: string;
+          details?: string;
+        };
+        if (!res.ok || !data.url) {
+          throw new Error(
+            data.details || data.error || "Lens Grove video upload failed",
+          );
+        }
+        const videoTitle = editPostTitle
+          ? `${editPostTitle} Video Dispatch`
+          : "Video Dispatch";
+        const videoMarkdown = `\n\n[video: ${videoTitle}](${data.url})\n\n`;
+        setEditPostMarkdown((prev) => `${prev}${videoMarkdown}`);
+        setEditPostHtml((prev) =>
+          ensureArticleHtml(`${editPostMarkdown}${videoMarkdown}`),
+        );
+        setStatusBanner({
+          kind: "success",
+          text: `Video uploaded to Lens Grove (${data.uri}) and inserted into post!`,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Video upload failed";
+        setStatusBanner({ kind: "error", text: msg });
+      } finally {
+        setIsGeneratingVideo(false);
+      }
+    },
+    [authFetch, editPostMarkdown, editPostTitle, setStatusBanner],
+  );
+
+  const handleGenerateVideoWithVeo = useCallback(async () => {
+    const defaultPrompt =
+      aiBannerPrompt.trim() ||
+      (editPostTitle
+        ? `Cinematic editorial teaser video for Dear Creative issue "${editPostTitle}"`
+        : "Cinematic editorial teaser video for Dear Creative studio");
+    const promptInput =
+      typeof window !== "undefined"
+        ? window.prompt(
+            "Enter a Google Veo video prompt (16:9 MP4 uploaded to Lens Grove):",
+            defaultPrompt,
+          )
+        : defaultPrompt;
+    if (!promptInput?.trim()) return;
+
+    setIsGeneratingVideo(true);
+    setStatusBanner(null);
+    try {
+      const res = await authFetch("/api/adam/videos/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: promptInput.trim(),
+          title: editPostTitle.trim() || "Dear Creative Dispatch",
+          slug: editPostSlug.trim() || null,
+          aspectRatio: "16:9",
+        }),
+      });
+      const data = (await res.json()) as {
+        url?: string;
+        uri?: string;
+        error?: string;
+        details?: string;
+      };
+      if (!res.ok || !data.url) {
+        throw new Error(
+          data.details || data.error || "Veo video generation failed",
+        );
+      }
+      const videoTitle = editPostTitle
+        ? `${editPostTitle} Video Dispatch`
+        : "Video Dispatch";
+      const videoMarkdown = `\n\n[video: ${videoTitle}](${data.url})\n\n`;
+      setEditPostMarkdown((prev) => `${prev}${videoMarkdown}`);
+      setEditPostHtml((prev) =>
+        ensureArticleHtml(`${editPostMarkdown}${videoMarkdown}`),
+      );
+      setStatusBanner({
+        kind: "success",
+        text: `Generated Veo video on Lens Grove (${data.uri}) and embedded in post!`,
+      });
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Veo video generation failed";
+      setStatusBanner({ kind: "error", text: msg });
+    } finally {
+      setIsGeneratingVideo(false);
+    }
+  }, [
+    aiBannerPrompt,
+    authFetch,
+    editPostMarkdown,
+    editPostSlug,
+    editPostTitle,
+    setStatusBanner,
+  ]);
+
+  // --- Export Google Colab (.ipynb) Asset Generator Notebook ---
+  const handleExportColabNotebook = useCallback(async () => {
+    setIsExportingNotebook(true);
+    setStatusBanner(null);
+    try {
+      const res = await authFetch("/api/adam/notebook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId: selectedEditPostId || null,
+          title:
+            editPostTitle.trim() ||
+            ideaTitle.trim() ||
+            "Dear Creative Dispatch",
+          slug: editPostSlug.trim() || null,
+          teaserText: editPostTeaser.trim() || null,
+          markdown:
+            editPostMarkdown.trim() ||
+            ideaContent.trim() ||
+            chatInput.trim() ||
+            null,
+          voiceName: googleVoiceName || "Puck",
+          bannerPrompt: aiBannerPrompt.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Notebook export failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const fileSlug = (editPostSlug.trim() || "dear-creative")
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-");
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = `dear-creative-${fileSlug}-assets.ipynb`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+
+      setStatusBanner({
+        kind: "success",
+        text: `Downloaded Google Colab notebook (dear-creative-${fileSlug}-assets.ipynb) with Banner, TTS Audio, Veo Video & Lens Grove cells!`,
+      });
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to export Colab notebook";
+      setStatusBanner({ kind: "error", text: msg });
+    } finally {
+      setIsExportingNotebook(false);
+    }
+  }, [
+    aiBannerPrompt,
+    authFetch,
+    chatInput,
+    editPostMarkdown,
+    editPostSlug,
+    editPostTeaser,
+    editPostTitle,
+    googleVoiceName,
+    ideaContent,
+    ideaTitle,
+    selectedEditPostId,
+    setStatusBanner,
+  ]);
+
+  // --- Generate / Remove Pre-Generated Narration MP3 (Lens Grove) ---
+  const handleGenerateNarration = useCallback(async () => {
+    if (!selectedEditPostId) return;
+    if (
+      editPostAudioUrl &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Replace the existing narration? Save any unsaved post edits first so the audio matches the latest text.",
+      )
+    ) {
+      return;
+    }
+    setIsGeneratingNarration(true);
+    setStatusBanner(null);
+    try {
+      const res = await authFetch(
+        `/api/adam/posts/${encodeURIComponent(selectedEditPostId)}/audio`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ voice: narrationVoice }),
+        },
+      );
+      const data = (await res.json()) as {
+        url?: string;
+        uri?: string;
+        voice?: string;
+        bytes?: number;
+        error?: string;
+        details?: string;
+      };
+      if (!res.ok || !data.url) {
+        throw new Error(data.details || data.error || "Narration failed");
+      }
+      setEditPostAudioUrl(data.url);
+      setEditPostAudioVoice(data.voice ?? narrationVoice);
+      setAdminPosts((prev) =>
+        prev.map((p) =>
+          p.id === selectedEditPostId
+            ? { ...p, audioUrl: data.url, audioVoice: data.voice ?? narrationVoice }
+            : p,
+        ),
+      );
+      const sizeKb = data.bytes ? ` (${Math.round(data.bytes / 1024)} KB)` : "";
+      setStatusBanner({
+        kind: "success",
+        text: `Narration MP3 generated with ${voiceLabel(data.voice ?? narrationVoice)} and stored on Lens Grove${sizeKb}. Readers now stream this file.`,
+      });
+    } catch (err: unknown) {
+      setStatusBanner({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Narration failed",
+      });
+    } finally {
+      setIsGeneratingNarration(false);
+    }
+  }, [
+    authFetch,
+    editPostAudioUrl,
+    narrationVoice,
+    selectedEditPostId,
+    setStatusBanner,
+  ]);
+
+  const handleRemoveNarration = useCallback(async () => {
+    if (!selectedEditPostId) return;
+    setIsGeneratingNarration(true);
+    try {
+      const res = await authFetch(
+        `/api/adam/posts/${encodeURIComponent(selectedEditPostId)}/audio`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) throw new Error(`Remove failed (${res.status})`);
+      setEditPostAudioUrl("");
+      setEditPostAudioVoice("");
+      setAdminPosts((prev) =>
+        prev.map((p) =>
+          p.id === selectedEditPostId
+            ? { ...p, audioUrl: null, audioVoice: null }
+            : p,
+        ),
+      );
+      setStatusBanner({ kind: "info", text: "Narration removed from post." });
+    } catch (err: unknown) {
+      setStatusBanner({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Remove failed",
+      });
+    } finally {
+      setIsGeneratingNarration(false);
+    }
+  }, [authFetch, selectedEditPostId, setStatusBanner]);
 
   // --- Save Edited Post (Published or Draft) ---
   const handleSaveEditedPost = useCallback(
@@ -2596,7 +2961,21 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Generate Banner from Chat */}
+                  <button
+                    type="button"
+                    disabled={isSendingChat}
+                    onClick={() =>
+                      void sendChatMessage({ forceGenerateBanner: true })
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3.5 py-2 text-xs font-medium text-zinc-700 shadow-2xs hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    title="Generate an AI banner image and upload to Lens Grove"
+                  >
+                    <span aria-hidden="true">🎨</span>
+                    <span>Generate Banner</span>
+                  </button>
+
                   {/* Draft Issue from Chat */}
                   <button
                     type="button"
@@ -2730,6 +3109,28 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                 Accepted Uploads:
               </span>{" "}
               Images (PNG, JPG, WebP) · Docs (PDF) · Text &amp; Markdown
+            </div>
+
+            <div className="border-t border-zinc-200 pt-3 space-y-2 dark:border-zinc-800">
+              <h3 className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                Google Colab Asset Notebook
+              </h3>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                Export a ready-to-run <code>.ipynb</code> notebook for Imagen 3 banners, static MP3 TTS audio (&lt; $0.01/issue), Veo video clips, and Lens Grove uploads.
+              </p>
+              <button
+                type="button"
+                disabled={isExportingNotebook}
+                onClick={() => void handleExportColabNotebook()}
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                <span aria-hidden="true">📓</span>
+                <span>
+                  {isExportingNotebook
+                    ? "Building Notebook…"
+                    : "Export Colab Notebook (.ipynb)"}
+                </span>
+              </button>
             </div>
           </aside>
         </section>
@@ -3427,7 +3828,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <input
                       type="file"
                       ref={bannerFileInputRef}
@@ -3437,6 +3838,19 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                         const file = e.target.files?.[0];
                         if (file) {
                           void handleUploadBannerToGrove(file);
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                    <input
+                      type="file"
+                      ref={videoFileInputRef}
+                      accept="video/mp4,video/webm,video/ogg"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          void handleUploadVideoToGrove(file);
                         }
                         e.target.value = "";
                       }}
@@ -3454,7 +3868,84 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                           : "Upload Banner (Lens Grove)"}
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      disabled={isGeneratingVideo || !selectedEditPostId}
+                      onClick={() => videoFileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-2xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                      title="Upload an MP4 or WebM video to Lens Grove and embed in post"
+                    >
+                      <span>📹</span>
+                      <span>
+                        {isGeneratingVideo
+                          ? "Processing Video…"
+                          : "Upload Video (Grove)"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isGeneratingVideo || !selectedEditPostId}
+                      onClick={() => void handleGenerateVideoWithVeo()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-2xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                      title="Generate a 16:9 video clip with Google Veo and upload to Lens Grove"
+                    >
+                      <span>🎬</span>
+                      <span>Veo AI Video</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isExportingNotebook}
+                      onClick={() => void handleExportColabNotebook()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-2xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                      title="Export a Google Colab (.ipynb) notebook pre-populated with this post's content for generating banners, static MP3 audio, Veo videos, and Lens Grove uploads"
+                    >
+                      <span>📓</span>
+                      <span>
+                        {isExportingNotebook
+                          ? "Exporting…"
+                          : "Colab Asset Notebook (.ipynb)"}
+                      </span>
+                    </button>
                   </div>
+                </div>
+
+                {/* AI Banner Generator Bar */}
+                <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200/80 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-900/80">
+                  <input
+                    type="text"
+                    value={aiBannerPrompt}
+                    onChange={(e) => setAiBannerPrompt(e.target.value)}
+                    placeholder="AI Banner prompt (optional — leave blank to generate from post title & teaser)…"
+                    aria-label="AI Banner visual prompt"
+                    className="min-w-[220px] flex-1 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                  />
+                  <select
+                    value={aiBannerAspectRatio}
+                    onChange={(e) =>
+                      setAiBannerAspectRatio(
+                        e.target.value as "16:9" | "1:1" | "21:9",
+                      )
+                    }
+                    aria-label="Banner aspect ratio"
+                    className="rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                  >
+                    <option value="16:9">16:9 Hero</option>
+                    <option value="21:9">21:9 Cinema</option>
+                    <option value="1:1">1:1 Square</option>
+                  </select>
+                  <button
+                    type="button"
+                    disabled={isGeneratingBanner || !selectedEditPostId}
+                    onClick={() => void handleGenerateBannerWithAi()}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                  >
+                    <span>✨</span>
+                    <span>
+                      {isGeneratingBanner
+                        ? "Generating & Uploading to Grove…"
+                        : "Generate Banner with AI"}
+                    </span>
+                  </button>
                 </div>
 
                 <div className="grid items-center gap-4 sm:grid-cols-4">
@@ -3588,6 +4079,97 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                     );
                   })()}
                 </div>
+              </div>
+
+              {/* Narration Audio (pre-generated MP3 on Lens Grove) */}
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/50">
+                <div className="mb-3">
+                  <h3 className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                    <span>Narration Audio</span>
+                    <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                      Static MP3 · Lens Grove
+                    </span>
+                  </h3>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">
+                    Pick a voice and generate the narration once. Readers stream this MP3 from Lens Grove — no per-visitor TTS cost. Save text edits first, then regenerate if the post changes.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <label htmlFor="narration-voice" className="sr-only">
+                    Narration voice
+                  </label>
+                  <select
+                    id="narration-voice"
+                    value={narrationVoice}
+                    onChange={(e) => setNarrationVoice(e.target.value)}
+                    disabled={isGeneratingNarration}
+                    className="rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                  >
+                    {NARRATION_VOICES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={isGeneratingNarration || !selectedEditPostId}
+                    onClick={() => void handleGenerateNarration()}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                  >
+                    <span aria-hidden="true">🎧</span>
+                    <span>
+                      {isGeneratingNarration
+                        ? "Generating narration… (long posts take a minute)"
+                        : editPostAudioUrl
+                          ? "Regenerate Narration"
+                          : "Generate Narration MP3"}
+                    </span>
+                  </button>
+                  {editPostAudioUrl ? (
+                    <button
+                      type="button"
+                      disabled={isGeneratingNarration}
+                      onClick={() => void handleRemoveNarration()}
+                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+
+                {editPostAudioUrl ? (
+                  <div className="mt-3 space-y-1.5">
+                    <p className="text-[11px] text-zinc-500">
+                      Current narration:{" "}
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                        {voiceLabel(editPostAudioVoice)}
+                      </span>{" "}
+                      ·{" "}
+                      <a
+                        href={editPostAudioUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono underline"
+                      >
+                        Lens Grove MP3 ↗
+                      </a>
+                    </p>
+                    <audio
+                      controls
+                      preload="none"
+                      src={editPostAudioUrl}
+                      className="w-full"
+                    >
+                      <track kind="captions" />
+                    </audio>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[11px] text-zinc-400">
+                    No narration yet — readers currently hear on-demand synthesis.
+                  </p>
+                )}
               </div>
 
               {/* Editor Mode & Formatting Toolbar */}

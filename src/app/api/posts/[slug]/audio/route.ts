@@ -20,6 +20,17 @@ export async function GET(
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
 
+  // If the post already has a pre-generated static audio MP3 on Lens Grove, serve it directly
+  if (post.audioUrl) {
+    return NextResponse.json({
+      ok: true,
+      audioUrl: post.audioUrl,
+      voice: post.audioVoice || voice,
+      preGenerated: true,
+      mimeType: "audio/mpeg",
+    });
+  }
+
   // Compose narration script: Title, excerpt, and main text
   const cleanBody = stripHtmlTags(post.bodyHtml ?? post.excerpt ?? "");
   const narration = `${post.title}. ${post.excerpt ? post.excerpt + ". " : ""}${cleanBody}`;

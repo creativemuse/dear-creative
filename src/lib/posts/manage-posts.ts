@@ -4,6 +4,8 @@ import type { DearCreativeDb } from "@/db/client";
 import {
   corePostColumns,
   ensurePostsSchema,
+  getPostAudioColumns,
+  setPostAudioColumns,
   type CorePostRow,
 } from "@/db/ensure-schema";
 import { approvals, posts, type PostStatus } from "@/db/schema";
@@ -25,6 +27,8 @@ export type AdminPostRecord = {
   emailHtml: string | null;
   bodyHtml: string | null;
   markdown: string;
+  audioUrl?: string | null;
+  audioVoice?: string | null;
   canonicalUrl: string | null;
   source: string | null;
   sponsorId: string | null;
@@ -41,10 +45,15 @@ export type UpdateAdminPostInput = {
   emailHtml?: string | null;
   bodyHtml?: string | null;
   markdown?: string | null;
+  audioUrl?: string | null;
+  audioVoice?: string | null;
   syncEmailWithBody?: boolean;
 };
 
-function toAdminPostRecord(row: CorePostRow): AdminPostRecord {
+function toAdminPostRecord(
+  row: CorePostRow,
+  audio?: { audioUrl: string | null; audioVoice: string | null },
+): AdminPostRecord {
   const effectiveBody = row.bodyHtml ?? row.emailHtml ?? "";
   const sanitizedBody = effectiveBody ? ensureArticleHtml(effectiveBody) : null;
   return {
@@ -58,6 +67,8 @@ function toAdminPostRecord(row: CorePostRow): AdminPostRecord {
     emailHtml: row.emailHtml ?? null,
     bodyHtml: sanitizedBody,
     markdown: htmlToMarkdown(effectiveBody),
+    audioUrl: audio?.audioUrl ?? null,
+    audioVoice: audio?.audioVoice ?? null,
     canonicalUrl: row.canonicalUrl ?? null,
     source: row.source ?? null,
     sponsorId: row.sponsorId ?? null,
@@ -85,7 +96,12 @@ export async function listAdminPosts(
         .orderBy(desc(posts.publishedAt), desc(posts.updatedAt))
         .limit(limit);
 
-  return rows.map(toAdminPostRecord);
+  return Promise.all(
+    rows.map(async (row) => {
+      const audio = await getPostAudioColumns(db, row.id);
+      return toAdminPostRecord(row, audio);
+    }),
+  );
 }
 
 export async function getAdminPostByIdOrSlug(
@@ -104,7 +120,8 @@ export async function getAdminPostByIdOrSlug(
     .limit(1);
 
   if (row) {
-    return toAdminPostRecord(row);
+    const audio = await getPostAudioColumns(db, row.id);
+    return toAdminPostRecord(row, audio);
   }
 
   // Fallback to static MDX content (e.g. hello-dear-creative)
@@ -204,6 +221,13 @@ export async function updateAdminPost(
       source: "paragraph",
     });
 
+    if (input.audioUrl !== undefined || input.audioVoice !== undefined) {
+      await setPostAudioColumns(db, newId, {
+        audioUrl: input.audioUrl?.trim() || null,
+        audioVoice: input.audioVoice?.trim() || null,
+      });
+    }
+
     const [created] = await db
       .select(corePostColumns)
       .from(posts)
@@ -219,7 +243,11 @@ export async function updateAdminPost(
       payload: { slug: nextSlug, title: nextTitle },
     });
 
-    return { post: toAdminPostRecord(created), previousSlug: fullContent.slug };
+    const createdAudio = await getPostAudioColumns(db, newId);
+    return {
+      post: toAdminPostRecord(created, createdAudio),
+      previousSlug: fullContent.slug,
+    };
   }
 
   const nextTitle =
@@ -298,6 +326,17 @@ export async function updateAdminPost(
       updatedAt: now,
     })
     .where(eq(posts.id, existing.id));
+
+  if (input.audioUrl !== undefined || input.audioVoice !== undefined) {
+    await setPostAudioColumns(db, existing.id, {
+      audioUrl:
+        input.audioUrl !== undefined ? input.audioUrl?.trim() || null : undefined,
+      audioVoice:
+        input.audioVoice !== undefined
+          ? input.audioVoice?.trim() || null
+          : undefined,
+    });
+  }
 
   // Keep pending approval contentHash synchronized if a draft post is edited
   const [approvalRow] = await db

@@ -6,7 +6,13 @@ import {
   renderMarkdownToSafeHtml,
 } from "@/lib/html/markdown-to-html";
 import { sanitizeArticleHtml } from "@/lib/html/sanitize-article-html";
+import { replaceBannerInHtml } from "@/lib/posts/banner-swap";
+import { generateDeterministicBannerSvg } from "@/lib/posts/post-cover-image";
 import { getRecentFeedbackSummaryForEditorial } from "@/lib/posts/post-feedback";
+import {
+  uploadToLensGrove,
+  type LensGroveUploadResult,
+} from "@/lib/storage/lens-grove";
 import { fetchActiveSponsors } from "./fetch-sponsors";
 import {
   createAdamIdea,
@@ -54,6 +60,24 @@ export type DraftProposal = {
   sponsorId?: string | null;
 };
 
+export type GeneratedBannerResult = {
+  url: string;
+  uri: string;
+  storageKey: string;
+  mimeType: string;
+  promptUsed: string;
+  provider: "gemini-image" | "imagen" | "deterministic-svg";
+};
+
+export type GeneratedVideoResult = {
+  url: string;
+  uri: string;
+  storageKey: string;
+  mimeType: string;
+  promptUsed: string;
+  provider: "veo";
+};
+
 export type StudioChatResponse = {
   reply: string;
   createdDraft?: {
@@ -64,6 +88,7 @@ export type StudioChatResponse = {
     teaserText: string;
     emailSubject: string;
   } | null;
+  generatedBanner?: GeneratedBannerResult | null;
   provider: "gemini" | "adk" | "local-editorial";
 };
 
@@ -362,7 +387,12 @@ export async function chatWithAdam(
     history?: StudioChatMessage[];
     attachments?: StudioAttachmentInput[];
     forceCreateDraft?: boolean;
+    forceGenerateBanner?: boolean;
     fetchFn?: typeof fetch;
+    uploadFn?: (
+      file: File | Blob,
+      fileName?: string,
+    ) => Promise<LensGroveUploadResult>;
   },
 ): Promise<StudioChatResponse> {
   const sponsors = await fetchActiveSponsors(db);
@@ -379,9 +409,32 @@ export async function chatWithAdam(
       input.message,
     );
 
+  const wantsBanner =
+    Boolean(input.forceGenerateBanner) ||
+    /\b(generate|create|make|design|render|paint|draw)\b[\s\S]{0,48}\b(banner|cover\s*image|hero\s*image|thumbnail|header\s*image|artwork|image\s*for)\b/i.test(
+      input.message,
+    );
+
+  let generatedBanner: GeneratedBannerResult | null = null;
+  if (wantsBanner) {
+    try {
+      generatedBanner = await generateBannerWithGemini({
+        prompt: input.message,
+        title: input.message.slice(0, 72),
+        fetchFn: input.fetchFn,
+        uploadFn: input.uploadFn,
+      });
+    } catch {
+      generatedBanner = null;
+    }
+  }
+
   const prompt = [
     historyContext ? `Conversation history:\n${historyContext}` : "",
     `Current Editor Request:\n${input.message}`,
+    generatedBanner
+      ? `A banner image was just generated and uploaded to Lens Grove at ${generatedBanner.url} (URI: ${generatedBanner.uri}). Mention it in your reply.`
+      : "",
     wantsDraft
       ? "The editor wants you to create a newsletter draft now. Set shouldCreateDraft=true and provide a complete draft object."
       : "If the editor is asking you to draft a post or newsletter issue, set shouldCreateDraft=true and include the draft object; otherwise set shouldCreateDraft=false.",
@@ -397,10 +450,26 @@ export async function chatWithAdam(
   });
 
   if (geminiResult) {
+    const bannerAppend =
+      generatedBanner && !geminiResult.reply.includes(generatedBanner.url)
+        ? `\n\n![Generated Banner](${generatedBanner.url})\n*Uploaded to Lens Grove:* \`${generatedBanner.uri}\``
+        : "";
     if (geminiResult.draft) {
+      if (generatedBanner) {
+        geminiResult.draft.bodyHtml = replaceBannerInHtml(
+          geminiResult.draft.bodyHtml,
+          generatedBanner.url,
+          geminiResult.draft.title,
+        );
+        geminiResult.draft.emailHtml = replaceBannerInHtml(
+          geminiResult.draft.emailHtml,
+          generatedBanner.url,
+          geminiResult.draft.title,
+        );
+      }
       const saved = await persistDraftProposal(db, geminiResult.draft);
       return {
-        reply: geminiResult.reply,
+        reply: `${geminiResult.reply}${bannerAppend}`,
         createdDraft: {
           postId: saved.postId,
           approvalId: saved.approvalId,
@@ -409,12 +478,14 @@ export async function chatWithAdam(
           teaserText: geminiResult.draft.teaserText,
           emailSubject: geminiResult.draft.emailSubject,
         },
+        generatedBanner,
         provider: "gemini",
       };
     }
     return {
-      reply: geminiResult.reply,
+      reply: `${geminiResult.reply}${bannerAppend}`,
       createdDraft: null,
+      generatedBanner,
       provider: "gemini",
     };
   }
@@ -426,9 +497,24 @@ export async function chatWithAdam(
       attachments: input.attachments,
       sponsorId: defaultSponsorId,
     });
+    if (generatedBanner) {
+      proposal.bodyHtml = replaceBannerInHtml(
+        proposal.bodyHtml,
+        generatedBanner.url,
+        proposal.title,
+      );
+      proposal.emailHtml = replaceBannerInHtml(
+        proposal.emailHtml,
+        generatedBanner.url,
+        proposal.title,
+      );
+    }
     const saved = await persistDraftProposal(db, proposal);
+    const bannerMarkdown = generatedBanner
+      ? `\n\n![Generated Banner](${generatedBanner.url})\n*Lens Grove URI:* \`${generatedBanner.uri}\``
+      : "";
     return {
-      reply: `I turned your note into a draft issue titled "${proposal.title}" (slug: \`${saved.slug}\`) and placed it in the Approval Queue for your review.`,
+      reply: `I turned your note into a draft issue titled "${proposal.title}" (slug: \`${saved.slug}\`) and placed it in the Approval Queue for your review.${bannerMarkdown}`,
       createdDraft: {
         postId: saved.postId,
         approvalId: saved.approvalId,
@@ -437,6 +523,16 @@ export async function chatWithAdam(
         teaserText: proposal.teaserText,
         emailSubject: proposal.emailSubject,
       },
+      generatedBanner,
+      provider: "local-editorial",
+    };
+  }
+
+  if (generatedBanner) {
+    return {
+      reply: `I generated a new banner for your issue and uploaded it to Lens Grove Storage:\n\n![Generated Banner](${generatedBanner.url})\n\n- **Gateway URL:** \`${generatedBanner.url}\`\n- **Lens Grove URI:** \`${generatedBanner.uri}\`\n\nYou can apply it directly in the **Posts** tab or ask me to draft an issue with it.`,
+      createdDraft: null,
+      generatedBanner,
       provider: "local-editorial",
     };
   }
@@ -453,6 +549,7 @@ export async function chatWithAdam(
       input.message.length > 140 ? "..." : ""
     }".${attachmentSummary} Let me know when you'd like me to turn this into a post for the Approval Queue, or click "Draft Issue from Chat".`,
     createdDraft: null,
+    generatedBanner: null,
     provider: "local-editorial",
   };
 }
@@ -989,5 +1086,353 @@ export async function synthesizeSpeechWithGoogle(input: {
     audioBase64: cloudData.audioContent,
     mimeType: "audio/mp3",
     provider: "google-cloud-tts",
+  };
+}
+
+function extractImageFromGeminiResponse(data: unknown): {
+  imageBase64: string;
+  mimeType: string;
+} | null {
+  if (!data || typeof data !== "object") return null;
+  const payload = data as {
+    predictions?: Array<{
+      bytesBase64Encoded?: string;
+      mimeType?: string;
+    }>;
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: { mimeType?: string; data?: string };
+        }>;
+      };
+    }>;
+  };
+
+  const pred = payload.predictions?.[0];
+  if (pred?.bytesBase64Encoded) {
+    return {
+      imageBase64: pred.bytesBase64Encoded,
+      mimeType: pred.mimeType || "image/png",
+    };
+  }
+
+  const parts = payload.candidates?.[0]?.content?.parts ?? [];
+  for (const part of parts) {
+    if (
+      part.inlineData?.data &&
+      (!part.inlineData.mimeType ||
+        part.inlineData.mimeType.startsWith("image/"))
+    ) {
+      return {
+        imageBase64: part.inlineData.data,
+        mimeType: part.inlineData.mimeType || "image/png",
+      };
+    }
+  }
+
+  return null;
+}
+
+export async function generateBannerWithGemini(input: {
+  prompt?: string | null;
+  title?: string | null;
+  teaserText?: string | null;
+  slug?: string | null;
+  aspectRatio?: "16:9" | "1:1" | "21:9";
+  fetchFn?: typeof fetch;
+  uploadFn?: (
+    file: File | Blob,
+    fileName?: string,
+  ) => Promise<LensGroveUploadResult>;
+}): Promise<GeneratedBannerResult> {
+  const title = input.title?.trim() || "Dear Creative Dispatch";
+  const slug = slugifyTitle(input.slug?.trim() || title);
+  const aspectRatio = input.aspectRatio || "16:9";
+  const customPrompt = input.prompt?.trim() || "";
+
+  const effectivePrompt = customPrompt
+    ? `Create an editorial banner artwork for the creative publication "Dear Creative". Aspect ratio ${aspectRatio}. Visual brief: ${customPrompt}. Title context: "${title}". High contrast, clean modern composition, vibrant creative technology aesthetic.`
+    : `Create a striking widescreen editorial cover artwork (${aspectRatio}) for the publication "Dear Creative" issue titled "${title}"${
+        input.teaserText ? ` — ${input.teaserText.trim()}` : ""
+      }. Modern independent creator aesthetic, bold geometric lighting, rich editorial illustration.`;
+
+  const apiKey = getGeminiApiKey();
+  const fetchImpl = input.fetchFn ?? fetch;
+  const uploadImpl = input.uploadFn ?? uploadToLensGrove;
+
+  let imageBytes: Buffer | null = null;
+  let mimeType = "image/png";
+  let provider: "gemini-image" | "imagen" | "deterministic-svg" =
+    "deterministic-svg";
+
+  if (apiKey) {
+    // 1. Try Gemini Native Image Generation (gemini-2.5-flash-image / ADAM_GEMINI_IMAGE_MODEL)
+    const imageModel =
+      process.env.ADAM_GEMINI_IMAGE_MODEL?.trim() || "gemini-2.5-flash-image";
+    const geminiImageUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      imageModel,
+    )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+    try {
+      const geminiRes = await fetchImpl(geminiImageUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: effectivePrompt }],
+            },
+          ],
+          generationConfig: {
+            responseModalities: ["TEXT", "IMAGE"],
+          },
+        }),
+      });
+
+      if (geminiRes.ok) {
+        const json = await geminiRes.json();
+        const extracted = extractImageFromGeminiResponse(json);
+        if (extracted) {
+          imageBytes = Buffer.from(extracted.imageBase64, "base64");
+          mimeType = extracted.mimeType;
+          provider = "gemini-image";
+        }
+      }
+    } catch {
+      // Fall through to Imagen 3
+    }
+
+    // 2. Fallback to Imagen 3 (:predict endpoint)
+    if (!imageBytes) {
+      const imagenModel =
+        process.env.ADAM_IMAGEN_MODEL?.trim() || "imagen-3.0-generate-002";
+      const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        imagenModel,
+      )}:predict?key=${encodeURIComponent(apiKey)}`;
+
+      try {
+        const imagenRes = await fetchImpl(imagenUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instances: [{ prompt: effectivePrompt }],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: aspectRatio === "21:9" ? "16:9" : aspectRatio,
+            },
+          }),
+        });
+
+        if (imagenRes.ok) {
+          const json = await imagenRes.json();
+          const extracted = extractImageFromGeminiResponse(json);
+          if (extracted) {
+            imageBytes = Buffer.from(extracted.imageBase64, "base64");
+            mimeType = extracted.mimeType;
+            provider = "imagen";
+          }
+        }
+      } catch {
+        // Fall through to deterministic SVG banner
+      }
+    }
+  }
+
+  // 3. Deterministic SVG fallback when no API key or upstream image model unavailable
+  if (!imageBytes) {
+    const svg = generateDeterministicBannerSvg({
+      title,
+      slug: customPrompt ? `${slug}-${slugifyTitle(customPrompt)}` : slug,
+    });
+    imageBytes = Buffer.from(svg, "utf-8");
+    mimeType = "image/svg+xml";
+    provider = "deterministic-svg";
+  }
+
+  const ext =
+    mimeType === "image/svg+xml"
+      ? "svg"
+      : mimeType === "image/jpeg"
+        ? "jpg"
+        : mimeType === "image/webp"
+          ? "webp"
+          : "png";
+  const fileName = `${slug}-banner.${ext}`;
+  const blob = new Blob([new Uint8Array(imageBytes)], { type: mimeType });
+
+  try {
+    const uploaded = await uploadImpl(blob, fileName);
+    return {
+      url: uploaded.gatewayUrl,
+      uri: uploaded.uri,
+      storageKey: uploaded.storageKey,
+      mimeType,
+      promptUsed: effectivePrompt,
+      provider,
+    };
+  } catch {
+    // Offline fallback: return data URL so local dev/tests still succeed
+    const fallbackUrl =
+      mimeType === "image/svg+xml"
+        ? `data:image/svg+xml;utf8,${encodeURIComponent(imageBytes.toString("utf-8"))}`
+        : `data:${mimeType};base64,${imageBytes.toString("base64")}`;
+    const localKey = `local-${slug}-${Date.now().toString(36)}`;
+    return {
+      url: fallbackUrl,
+      uri: `lens://${localKey}`,
+      storageKey: localKey,
+      mimeType,
+      promptUsed: effectivePrompt,
+      provider,
+    };
+  }
+}
+
+export async function generateVideoWithVeo(input: {
+  prompt: string;
+  title?: string | null;
+  slug?: string | null;
+  aspectRatio?: "16:9" | "9:16";
+  imageBase64?: string | null;
+  imageMimeType?: string | null;
+  maxPollAttempts?: number;
+  pollIntervalMs?: number;
+  fetchFn?: typeof fetch;
+  uploadFn?: (
+    file: File | Blob,
+    fileName?: string,
+  ) => Promise<LensGroveUploadResult>;
+}): Promise<GeneratedVideoResult> {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not configured on the server; use the Google Colab Asset Notebook or upload an MP4 directly.",
+    );
+  }
+
+  const fetchImpl = input.fetchFn ?? fetch;
+  const uploadImpl = input.uploadFn ?? uploadToLensGrove;
+  const title = input.title?.trim() || "Dear Creative Dispatch";
+  const slug = slugifyTitle(input.slug?.trim() || title);
+  const aspectRatio = input.aspectRatio || "16:9";
+  const promptText = input.prompt.trim();
+  if (!promptText) {
+    throw new Error("A video prompt is required for Veo generation.");
+  }
+
+  const videoModel =
+    process.env.ADAM_GEMINI_VIDEO_MODEL?.trim() || "veo-2.0-generate-001";
+  const startUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    videoModel,
+  )}:predictLongRunning?key=${encodeURIComponent(apiKey)}`;
+
+  const instancePayload: Record<string, unknown> = { prompt: promptText };
+  if (input.imageBase64) {
+    instancePayload.image = {
+      bytesBase64Encoded: input.imageBase64,
+      mimeType: input.imageMimeType || "image/png",
+    };
+  }
+
+  const startRes = await fetchImpl(startUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      instances: [instancePayload],
+      parameters: {
+        aspectRatio,
+        sampleCount: 1,
+      },
+    }),
+  });
+
+  if (!startRes.ok) {
+    throw new Error(`Veo video generation request failed (${startRes.status})`);
+  }
+
+  type VeoOperationPayload = {
+    name?: string;
+    done?: boolean;
+    error?: { message?: string };
+    response?: {
+      generateVideoResponse?: {
+        generatedSamples?: Array<{
+          video?: { uri?: string; bytesBase64Encoded?: string; mimeType?: string };
+        }>;
+      };
+      predictions?: Array<{
+        bytesBase64Encoded?: string;
+        video?: { uri?: string; bytesBase64Encoded?: string };
+      }>;
+    };
+  };
+
+  let opData = (await startRes.json()) as VeoOperationPayload;
+  const maxPolls = input.maxPollAttempts ?? 12;
+  const pollInterval = input.pollIntervalMs ?? 2500;
+
+  let attempts = 0;
+  while (!opData.done && opData.name && attempts < maxPolls) {
+    attempts++;
+    if (pollInterval > 0) {
+      await new Promise((r) => setTimeout(r, pollInterval));
+    }
+    const pollUrl = `https://generativelanguage.googleapis.com/v1beta/${opData.name.replace(
+      /^\//,
+      "",
+    )}?key=${encodeURIComponent(apiKey)}`;
+    const pollRes = await fetchImpl(pollUrl, { method: "GET" });
+    if (!pollRes.ok) {
+      throw new Error(`Veo operation polling failed (${pollRes.status})`);
+    }
+    opData = (await pollRes.json()) as VeoOperationPayload;
+  }
+
+  if (opData.error?.message) {
+    throw new Error(`Veo error: ${opData.error.message}`);
+  }
+
+  const sample =
+    opData.response?.generateVideoResponse?.generatedSamples?.[0]?.video ??
+    opData.response?.predictions?.[0]?.video ??
+    opData.response?.predictions?.[0];
+
+  let videoBytes: Buffer | null = null;
+  if (sample && "bytesBase64Encoded" in sample && sample.bytesBase64Encoded) {
+    videoBytes = Buffer.from(sample.bytesBase64Encoded, "base64");
+  } else if (sample && "uri" in sample && sample.uri) {
+    const dlUrl = sample.uri.includes("?")
+      ? `${sample.uri}&key=${encodeURIComponent(apiKey)}`
+      : `${sample.uri}?key=${encodeURIComponent(apiKey)}`;
+    const dlRes = await fetchImpl(dlUrl);
+    if (dlRes.ok) {
+      const ab = await dlRes.arrayBuffer();
+      videoBytes = Buffer.from(ab);
+    }
+  }
+
+  if (!videoBytes) {
+    throw new Error(
+      "Veo operation did not return video bytes yet; try running in the Google Colab Asset Notebook for longer renders.",
+    );
+  }
+
+  const fileName = `${slug}-video.mp4`;
+  const videoBlob = new Blob([new Uint8Array(videoBytes)], {
+    type: "video/mp4",
+  });
+  const uploaded = await uploadImpl(videoBlob, fileName);
+  const gatewayUrlWithExt = uploaded.gatewayUrl.includes("?")
+    ? `${uploaded.gatewayUrl}&ext=mp4`
+    : `${uploaded.gatewayUrl}?ext=mp4`;
+
+  return {
+    url: gatewayUrlWithExt,
+    uri: uploaded.uri,
+    storageKey: uploaded.storageKey,
+    mimeType: "video/mp4",
+    promptUsed: promptText,
+    provider: "veo",
   };
 }

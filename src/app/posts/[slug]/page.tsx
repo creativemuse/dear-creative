@@ -89,6 +89,8 @@ function PostArticle({ post }: { post: PublishedPostDetail }) {
         excerpt={post.excerpt}
         bodyHtml={bodyHtml}
         listenMinutes={metrics.listenMinutes}
+        audioUrl={post.audioUrl}
+        audioVoice={post.audioVoice}
       />
 
       {/* Article Content with Inline Key Takeaway Callout */}

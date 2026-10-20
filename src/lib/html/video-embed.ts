@@ -6,6 +6,8 @@
  * Formats embeds in modern, responsive 16:9 containers.
  */
 
+import { resolveGroveOrIpfsUrl } from "@/lib/storage/lens-grove";
+
 export type VideoProvider =
   | "creative-tv"
   | "livepeer"
@@ -137,15 +139,17 @@ export function parseVideoUrl(rawUrl: string, title?: string): ParsedVideo | nul
     };
   }
 
-  // 4. Direct video files (.mp4, .webm, .m3u8, .ogg)
+  // 4. Direct video files (.mp4, .webm, .m3u8, .ogg) or Lens Grove / IPFS video URIs
   const isDirectVideo =
-    /\.(mp4|webm|ogg|m3u8)(?:\?[^#\s]*)?$/i.test(trimmed) ||
+    /\.(mp4|webm|ogg|m3u8)(?:[?&][^#\s]*)?$/i.test(trimmed) ||
+    /[?&](?:ext|format)=(?:mp4|webm|ogg|m3u8)\b/i.test(trimmed) ||
     /^(?:ipfs|lens):\/\/.+\.(mp4|webm|ogg)$/i.test(trimmed);
 
   if (isDirectVideo) {
+    const resolvedUrl = resolveGroveOrIpfsUrl(trimmed);
     return {
       provider: "direct",
-      embedUrl: trimmed,
+      embedUrl: resolvedUrl,
       originalUrl: trimmed,
       title: title || "Video Player",
     };
@@ -163,9 +167,31 @@ export function isSupportedVideoUrl(url: string): boolean {
 
 /**
  * Generates responsive HTML markup for a parsed video embed.
+ * When `allowExplicitDirectGrove` is true (e.g. from `[video: Title](lens://...)`),
+ * bare `lens://`, `ipfs://`, or `api.grove.storage` URLs are treated as direct MP4 streams.
  */
-export function generateVideoEmbedHtml(url: string, customTitle?: string): string {
-  const parsed = parseVideoUrl(url, customTitle);
+export function generateVideoEmbedHtml(
+  url: string,
+  customTitle?: string,
+  allowExplicitDirectGrove = false,
+): string {
+  let parsed = parseVideoUrl(url, customTitle);
+  if (!parsed && allowExplicitDirectGrove && url?.trim()) {
+    const trimmed = url.trim().replace(/^<(.+)>$/, "$1");
+    if (
+      trimmed.startsWith("lens://") ||
+      trimmed.startsWith("ipfs://") ||
+      /^https?:\/\/api\.grove\.storage\//i.test(trimmed)
+    ) {
+      const resolvedUrl = resolveGroveOrIpfsUrl(trimmed);
+      parsed = {
+        provider: "direct",
+        embedUrl: resolvedUrl,
+        originalUrl: trimmed,
+        title: customTitle || "Video Player",
+      };
+    }
+  }
   if (!parsed) {
     return "";
   }

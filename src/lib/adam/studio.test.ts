@@ -10,12 +10,16 @@ import * as schema from "@/db/schema";
 import { approvals, posts } from "@/db/schema";
 import {
   chatWithAdam,
+  generateBannerWithGemini,
+  generateVideoWithVeo,
   pcm16ToWavBuffer,
   runScheduledIssueDraft,
   synthesizeSpeechWithGoogle,
   transcribeAudioWithGemini,
   turnIdeaIntoDraft,
 } from "./gemini-studio";
+import { buildDearCreativeAssetNotebook } from "./colab-notebook";
+import { renderMarkdownToSafeHtml } from "@/lib/html/markdown-to-html";
 import {
   createAdamIdea,
   listAdamIdeas,
@@ -250,5 +254,133 @@ describe("Adam Studio ideas, schedule, multimodal chat, and voice", () => {
     expect(interactionsResult.audioBase64).toBe(fakeWavB64);
     expect(interactionsResult.mimeType).toBe("audio/wav");
     expect(interactionsResult.provider).toBe("gemini-tts");
+  });
+
+  it("generates banners with Gemini/Imagen and uploads to Lens Grove (with deterministic fallback)", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+
+    const fakePngBase64 = Buffer.from("fake-png-bytes").toString("base64");
+    const mockImageFetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: fakePngBase64,
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const mockUpload = vi.fn(async () => ({
+      uri: "lens://banner123",
+      gatewayUrl: "https://api.grove.storage/banner123",
+      storageKey: "banner123",
+    }));
+
+    const bannerResult = await generateBannerWithGemini({
+      prompt: "Neon studio workspace with geometric light",
+      title: "Autonomous Creative Studios",
+      aspectRatio: "16:9",
+      fetchFn: mockImageFetch as unknown as typeof fetch,
+      uploadFn: mockUpload,
+    });
+
+    expect(bannerResult.provider).toBe("gemini-image");
+    expect(bannerResult.url).toBe("https://api.grove.storage/banner123");
+    expect(bannerResult.uri).toBe("lens://banner123");
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+
+    // Chat integration with banner generation
+    const db = await createTestDb();
+    const chatBanner = await chatWithAdam(db, {
+      message: "Please generate a banner for our issue on Onchain Media",
+      fetchFn: mockImageFetch as unknown as typeof fetch,
+      uploadFn: mockUpload,
+    });
+    expect(chatBanner.generatedBanner?.url).toBe(
+      "https://api.grove.storage/banner123",
+    );
+    expect(chatBanner.reply).toContain("https://api.grove.storage/banner123");
+  });
+
+  it("generates video clips with Google Veo and embeds Lens Grove videos in Markdown", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+
+    const fakeMp4Base64 = Buffer.from("fake-mp4-video").toString("base64");
+    const mockVeoFetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          name: "operations/veo-op-1",
+          done: true,
+          response: {
+            generateVideoResponse: {
+              generatedSamples: [
+                {
+                  video: {
+                    bytesBase64Encoded: fakeMp4Base64,
+                    mimeType: "video/mp4",
+                  },
+                },
+              ],
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const mockVideoUpload = vi.fn(async () => ({
+      uri: "lens://video999",
+      gatewayUrl: "https://api.grove.storage/video999",
+      storageKey: "video999",
+    }));
+
+    const videoResult = await generateVideoWithVeo({
+      prompt: "Slow camera push into a warm creative studio",
+      title: "Creative Motion",
+      fetchFn: mockVeoFetch as unknown as typeof fetch,
+      uploadFn: mockVideoUpload,
+    });
+
+    expect(videoResult.provider).toBe("veo");
+    expect(videoResult.uri).toBe("lens://video999");
+    expect(videoResult.url).toBe("https://api.grove.storage/video999?ext=mp4");
+
+    const renderedHtml = renderMarkdownToSafeHtml(
+      `[video: Creative Motion Dispatch](${videoResult.url})`,
+    );
+    expect(renderedHtml).toContain("<video");
+    expect(renderedHtml).toContain("https://api.grove.storage/video999?ext=mp4");
+  });
+
+  it("builds a valid Google Colab (.ipynb) asset generator notebook with Banner, TTS, Veo Video, and Lens Grove cells", () => {
+    const nb = buildDearCreativeAssetNotebook({
+      title: "Pre-Generating Static Audio & Video on Lens Grove",
+      slug: "lens-grove-static-assets",
+      teaserText: "How to keep AI generation costs under $0.01 per article.",
+      voiceName: "Puck",
+    });
+
+    expect(nb.nbformat).toBe(4);
+    expect(nb.nbformat_minor).toBe(5);
+    expect(nb.metadata.colab.name).toBe(
+      "dear-creative-lens-grove-static-assets-assets.ipynb",
+    );
+    const allSources = nb.cells.map((c) => c.source.join("")).join("\n");
+    expect(allSources).toContain("imagen-3.0-generate-002");
+    expect(allSources).toContain("gemini-2.5-flash-preview-tts");
+    expect(allSources).toContain("veo-2.0-generate-001");
+    expect(allSources).toContain("https://api.grove.storage?chain_id=232");
   });
 });
