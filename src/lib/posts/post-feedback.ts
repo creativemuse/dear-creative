@@ -1,5 +1,6 @@
 import { and, count, eq, gte } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { ensureAdamStudioSchema } from "@/db/ensure-schema";
 import { postFeedback, posts, type PostFeedbackSentiment } from "@/db/schema";
 
 export type FeedbackSummary = {
@@ -34,6 +35,7 @@ export async function recordPostFeedback(
     voterHash?: string | null;
   },
 ): Promise<{ id: string; slug: string; sentiment: PostFeedbackSentiment }> {
+  await ensureAdamStudioSchema(db);
   const { randomUUID } = await import("node:crypto");
   const id = randomUUID();
 
@@ -51,6 +53,7 @@ export async function getPostFeedbackSummary(
   db: DearCreativeDb,
   slug: string,
 ): Promise<FeedbackSummary> {
+  await ensureAdamStudioSchema(db);
   const helpfulRows = await db
     .select({ total: count() })
     .from(postFeedback)

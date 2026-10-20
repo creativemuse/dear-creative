@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { asc, desc, eq } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { ensureAdamStudioSchema } from "@/db/ensure-schema";
 import { adamIdeas, type AdamIdeaStatus } from "@/db/schema";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 
@@ -71,6 +72,7 @@ export async function createAdamIdea(
   db: DearCreativeDb,
   input: CreateAdamIdeaInput,
 ): Promise<AdamIdeaRecord> {
+  await ensureAdamStudioSchema(db);
   const rawContent = input.rawContent.trim();
   if (!rawContent) {
     throw new Error("Idea or rough draft content is required");
@@ -118,6 +120,7 @@ export async function listAdamIdeas(
   db: DearCreativeDb,
   options: { status?: AdamIdeaStatus; oldestFirst?: boolean } = {},
 ): Promise<AdamIdeaRecord[]> {
+  await ensureAdamStudioSchema(db);
   const order = options.oldestFirst
     ? asc(adamIdeas.createdAt)
     : desc(adamIdeas.createdAt);

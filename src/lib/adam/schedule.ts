@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { ensureAdamStudioSchema } from "@/db/ensure-schema";
 import {
   adamSchedules,
   type AdamScheduleRunStatus,
@@ -57,6 +58,7 @@ export function isValidFiveFieldCron(expr: string): boolean {
 export async function getOrCreateAdamSchedule(
   db: DearCreativeDb,
 ): Promise<AdamScheduleRecord> {
+  await ensureAdamStudioSchema(db);
   const [existing] = await db
     .select()
     .from(adamSchedules)
