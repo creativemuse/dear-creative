@@ -1,0 +1,37 @@
+# Dear Creative - Pixels Video Automation Specification
+# Aesthetic: High-Status Professional
+
+version: "1.0"
+brand:
+  name: "Dear Creative"
+  palette:
+    background: "#0a0a0a"
+    surface: "#18181b"
+    accent: "#fef08a"
+  typography:
+    primary: "Bold Sans"
+    accent: "Cursive Creative"
+    body: "Georgia Serif"
+
+rendering:
+  engine: "pixels-headless"
+  payment_gateway: "X402"
+  quality: "ultra"
+  resolution: "1080x1920" # Vertical for social
+
+templates:
+  - id: "professional-intro"
+    scenes:
+      - type: "text_overlay"
+        text: "Dear Creative"
+        font: "Cursive Creative"
+        color: "#fef08a"
+        animation: "fade-in-elegant"
+        duration: 3.0
+      - type: "brand_reveal"
+        background: "#0a0a0a"
+        elements:
+          - type: "logo"
+            asset: "dc-logo-gold"
+            position: "center"
+            duration: 2.0
