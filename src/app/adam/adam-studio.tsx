@@ -37,6 +37,7 @@ import {
   resolvePostCoverImage,
 } from "@/lib/posts/post-cover-image";
 import { resolveGroveOrIpfsUrl } from "@/lib/storage/lens-grove";
+import { NARRATION_VOICES, voiceLabel } from "@/lib/audio/narration-voices";
 
 export type StudioTab = "chat" | "ideas" | "posts" | "approvals" | "schedule";
 type VoiceEngineMode = "google" | "browser";
@@ -424,6 +425,11 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   const [isGeneratingBanner, setIsGeneratingBanner] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [isExportingNotebook, setIsExportingNotebook] = useState(false);
+  // Pre-generated narration (static MP3 on Lens Grove)
+  const [editPostAudioUrl, setEditPostAudioUrl] = useState("");
+  const [editPostAudioVoice, setEditPostAudioVoice] = useState("");
+  const [narrationVoice, setNarrationVoice] = useState<string>("Puck");
+  const [isGeneratingNarration, setIsGeneratingNarration] = useState(false);
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
   const videoFileInputRef = useRef<HTMLInputElement>(null);
   const [editPostMode, setEditPostMode] = useState<PostEditorMode>("markdown");
@@ -485,6 +491,11 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     setEditPostBanner(
       initialBanner.startsWith("data:image/svg") ? "" : initialBanner,
     );
+    setEditPostAudioUrl(post.audioUrl ?? "");
+    setEditPostAudioVoice(post.audioVoice ?? "");
+    if (post.audioVoice) {
+      setNarrationVoice(post.audioVoice);
+    }
   }, []);
 
   const authFetch = useCallback(
@@ -1866,6 +1877,99 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     selectedEditPostId,
     setStatusBanner,
   ]);
+
+  // --- Generate / Remove Pre-Generated Narration MP3 (Lens Grove) ---
+  const handleGenerateNarration = useCallback(async () => {
+    if (!selectedEditPostId) return;
+    if (
+      editPostAudioUrl &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Replace the existing narration? Save any unsaved post edits first so the audio matches the latest text.",
+      )
+    ) {
+      return;
+    }
+    setIsGeneratingNarration(true);
+    setStatusBanner(null);
+    try {
+      const res = await authFetch(
+        `/api/adam/posts/${encodeURIComponent(selectedEditPostId)}/audio`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ voice: narrationVoice }),
+        },
+      );
+      const data = (await res.json()) as {
+        url?: string;
+        uri?: string;
+        voice?: string;
+        bytes?: number;
+        error?: string;
+        details?: string;
+      };
+      if (!res.ok || !data.url) {
+        throw new Error(data.details || data.error || "Narration failed");
+      }
+      setEditPostAudioUrl(data.url);
+      setEditPostAudioVoice(data.voice ?? narrationVoice);
+      setAdminPosts((prev) =>
+        prev.map((p) =>
+          p.id === selectedEditPostId
+            ? { ...p, audioUrl: data.url, audioVoice: data.voice ?? narrationVoice }
+            : p,
+        ),
+      );
+      const sizeKb = data.bytes ? ` (${Math.round(data.bytes / 1024)} KB)` : "";
+      setStatusBanner({
+        kind: "success",
+        text: `Narration MP3 generated with ${voiceLabel(data.voice ?? narrationVoice)} and stored on Lens Grove${sizeKb}. Readers now stream this file.`,
+      });
+    } catch (err: unknown) {
+      setStatusBanner({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Narration failed",
+      });
+    } finally {
+      setIsGeneratingNarration(false);
+    }
+  }, [
+    authFetch,
+    editPostAudioUrl,
+    narrationVoice,
+    selectedEditPostId,
+    setStatusBanner,
+  ]);
+
+  const handleRemoveNarration = useCallback(async () => {
+    if (!selectedEditPostId) return;
+    setIsGeneratingNarration(true);
+    try {
+      const res = await authFetch(
+        `/api/adam/posts/${encodeURIComponent(selectedEditPostId)}/audio`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) throw new Error(`Remove failed (${res.status})`);
+      setEditPostAudioUrl("");
+      setEditPostAudioVoice("");
+      setAdminPosts((prev) =>
+        prev.map((p) =>
+          p.id === selectedEditPostId
+            ? { ...p, audioUrl: null, audioVoice: null }
+            : p,
+        ),
+      );
+      setStatusBanner({ kind: "info", text: "Narration removed from post." });
+    } catch (err: unknown) {
+      setStatusBanner({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Remove failed",
+      });
+    } finally {
+      setIsGeneratingNarration(false);
+    }
+  }, [authFetch, selectedEditPostId, setStatusBanner]);
 
   // --- Save Edited Post (Published or Draft) ---
   const handleSaveEditedPost = useCallback(
@@ -3975,6 +4079,97 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                     );
                   })()}
                 </div>
+              </div>
+
+              {/* Narration Audio (pre-generated MP3 on Lens Grove) */}
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/50">
+                <div className="mb-3">
+                  <h3 className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                    <span>Narration Audio</span>
+                    <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                      Static MP3 · Lens Grove
+                    </span>
+                  </h3>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">
+                    Pick a voice and generate the narration once. Readers stream this MP3 from Lens Grove — no per-visitor TTS cost. Save text edits first, then regenerate if the post changes.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <label htmlFor="narration-voice" className="sr-only">
+                    Narration voice
+                  </label>
+                  <select
+                    id="narration-voice"
+                    value={narrationVoice}
+                    onChange={(e) => setNarrationVoice(e.target.value)}
+                    disabled={isGeneratingNarration}
+                    className="rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                  >
+                    {NARRATION_VOICES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={isGeneratingNarration || !selectedEditPostId}
+                    onClick={() => void handleGenerateNarration()}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                  >
+                    <span aria-hidden="true">🎧</span>
+                    <span>
+                      {isGeneratingNarration
+                        ? "Generating narration… (long posts take a minute)"
+                        : editPostAudioUrl
+                          ? "Regenerate Narration"
+                          : "Generate Narration MP3"}
+                    </span>
+                  </button>
+                  {editPostAudioUrl ? (
+                    <button
+                      type="button"
+                      disabled={isGeneratingNarration}
+                      onClick={() => void handleRemoveNarration()}
+                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+
+                {editPostAudioUrl ? (
+                  <div className="mt-3 space-y-1.5">
+                    <p className="text-[11px] text-zinc-500">
+                      Current narration:{" "}
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                        {voiceLabel(editPostAudioVoice)}
+                      </span>{" "}
+                      ·{" "}
+                      <a
+                        href={editPostAudioUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono underline"
+                      >
+                        Lens Grove MP3 ↗
+                      </a>
+                    </p>
+                    <audio
+                      controls
+                      preload="none"
+                      src={editPostAudioUrl}
+                      className="w-full"
+                    >
+                      <track kind="captions" />
+                    </audio>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[11px] text-zinc-400">
+                    No narration yet — readers currently hear on-demand synthesis.
+                  </p>
+                )}
               </div>
 
               {/* Editor Mode & Formatting Toolbar */}

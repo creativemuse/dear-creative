@@ -99,6 +99,13 @@
       "when": 1792459720133,
       "tag": "0013_quiet_arclight",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1792470579682,
+      "tag": "0014_glossy_franklin_storm",
+      "breakpoints": true
     }
   ]
 }

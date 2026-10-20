@@ -118,6 +118,8 @@ export const posts = sqliteTable(
     gatedContent: text("gated_content"),
     isGated: integer("is_gated", { mode: "boolean" }).notNull().default(false),
     gatePriceUsdc: real("gate_price_usdc").default(1.0),
+    audioUrl: text("audio_url"),
+    audioVoice: text("audio_voice"),
     canonicalUrl: text("canonical_url"),
     sourceGuid: text("source_guid"),
     source: text("source", { enum: postSourceEnum }),

@@ -81,6 +81,10 @@ type DispatchAudioPlayerProps = {
   excerpt?: string | null;
   bodyHtml?: string | null;
   listenMinutes?: number;
+  /** Pre-generated narration MP3 on Lens Grove; when set, readers stream it with no live TTS. */
+  audioUrl?: string | null;
+  /** Voice the author selected when generating `audioUrl`. */
+  audioVoice?: string | null;
 };
 
 export function DispatchAudioPlayer({
@@ -89,7 +93,12 @@ export function DispatchAudioPlayer({
   excerpt,
   bodyHtml,
   listenMinutes = 2,
+  audioUrl,
+  audioVoice,
 }: DispatchAudioPlayerProps) {
+  const staticAudioSrc = audioUrl?.trim() || null;
+  const narratorName =
+    audioVoice === "Puck" ? "Adam" : audioVoice?.trim() || "Narrator";
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [playbackRate, setPlaybackRate] = useState<1 | 1.25 | 1.5>(1);
@@ -274,8 +283,8 @@ export function DispatchAudioPlayer({
       if (!isActiveRef.current) return;
       currentVoiceRef.current = targetVoice;
 
-      // 1. Check in-memory audio cache for target voice
-      const cachedSrc = audioCacheRef.current[targetVoice];
+      // 1. Prefer the author's pre-generated Lens Grove MP3, then the in-memory cache
+      const cachedSrc = staticAudioSrc ?? audioCacheRef.current[targetVoice];
       if (cachedSrc) {
         if (!audioRef.current) {
           audioRef.current = new Audio(cachedSrc);
@@ -334,6 +343,7 @@ export function DispatchAudioPlayer({
 
         const data = (await res.json()) as {
           audioBase64?: string;
+          audioUrl?: string;
           mimeType?: string;
           provider?: string;
           fallbackToLocalWebSpeech?: boolean;
@@ -344,8 +354,13 @@ export function DispatchAudioPlayer({
           return;
         }
 
-        if (data.audioBase64) {
-          const audioSrc = `data:${data.mimeType || "audio/mp3"};base64,${data.audioBase64}`;
+        const audioSrc =
+          data.audioUrl ||
+          (data.audioBase64
+            ? `data:${data.mimeType || "audio/mp3"};base64,${data.audioBase64}`
+            : null);
+
+        if (audioSrc) {
           audioCacheRef.current[targetVoice] = audioSrc;
 
           // Only proceed if user hasn't switched away while fetching
@@ -387,7 +402,7 @@ export function DispatchAudioPlayer({
         }
       }
     },
-    [slug, playbackRate, fallbackToBrowserSpeech, setupAudioElement, stopAllPlayback],
+    [slug, playbackRate, fallbackToBrowserSpeech, setupAudioElement, stopAllPlayback, staticAudioSrc],
   );
 
   // Toggle play/pause
@@ -576,6 +591,8 @@ export function DispatchAudioPlayer({
                 </span>
               ) : useBrowserSpeech ? (
                 `Browser Speech • ~${listenMinutes} min listen`
+              ) : staticAudioSrc ? (
+                `Narrated by ${narratorName} • ~${listenMinutes} min listen`
               ) : (
                 `Google Voice (${voice === "Puck" ? "Adam" : "Aoede"}) • ~${listenMinutes} min listen`
               )}
@@ -584,15 +601,17 @@ export function DispatchAudioPlayer({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Voice selector toggle */}
-          <button
-            type="button"
-            onClick={handleVoiceToggle}
-            className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 transition"
-            title="Switch Voice (Google Voice Engine)"
-          >
-            Voice: {voice === "Puck" ? "Adam" : "Aoede"}
-          </button>
+          {/* Voice selector toggle (only for live synthesis; pre-generated audio uses the author's voice) */}
+          {staticAudioSrc ? null : (
+            <button
+              type="button"
+              onClick={handleVoiceToggle}
+              className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 transition"
+              title="Switch Voice (Google Voice Engine)"
+            >
+              Voice: {voice === "Puck" ? "Adam" : "Aoede"}
+            </button>
+          )}
 
           <span className="font-mono text-xs text-zinc-500">
             {formatSeconds(currentTime)} / {formatSeconds(duration)}

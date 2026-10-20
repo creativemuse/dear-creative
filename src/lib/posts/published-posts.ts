@@ -1,5 +1,6 @@
 import { and, count, desc, eq, isNotNull } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { getPostAudioColumns } from "@/db/ensure-schema";
 import { posts } from "@/db/schema";
 import { resolvePostCoverImage } from "./post-cover-image";
 import { calculateReadingTime } from "./reading-time";
@@ -19,6 +20,8 @@ export type PublishedPostListItem = PostMeta & {
 
 export type PublishedPostDetail = PublishedPostListItem & {
   bodyHtml: string | null;
+  audioUrl?: string | null;
+  audioVoice?: string | null;
 };
 
 export type PublishedPostsPage = {
@@ -160,8 +163,12 @@ export async function getPublishedPostBySlug(
     return null;
   }
 
+  const audio = await getPostAudioColumns(db, slug);
+
   return {
     ...mapListRow(row),
     bodyHtml: row.bodyHtml,
+    audioUrl: audio.audioUrl,
+    audioVoice: audio.audioVoice,
   };
 }

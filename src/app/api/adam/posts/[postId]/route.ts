@@ -38,6 +38,8 @@ type PatchPostBody = {
   emailHtml?: string | null;
   bodyHtml?: string | null;
   markdown?: string | null;
+  audioUrl?: string | null;
+  audioVoice?: string | null;
   syncEmailWithBody?: boolean;
 };
 
@@ -76,6 +78,8 @@ export async function PATCH(request: Request, context: RouteContext) {
         emailHtml: body.emailHtml,
         bodyHtml: body.bodyHtml,
         markdown: body.markdown,
+        audioUrl: body.audioUrl,
+        audioVoice: body.audioVoice,
         syncEmailWithBody: body.syncEmailWithBody,
       },
       auth.actor,
