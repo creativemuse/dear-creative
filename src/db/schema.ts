@@ -41,7 +41,14 @@ export const approvalStatusEnum = [
   "voided",
 ] as const;
 
-export const deliveryChannelEnum = ["publish", "x", "email"] as const;
+export const deliveryChannelEnum = [
+  "publish",
+  "x",
+  "email",
+  "farcaster",
+  "discord",
+  "orb",
+] as const;
 export type DeliveryChannel = (typeof deliveryChannelEnum)[number];
 
 export const deliveryReceiptStatusEnum = [
