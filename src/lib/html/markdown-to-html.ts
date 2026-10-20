@@ -42,9 +42,9 @@ function formatInlineMarkdown(raw: string): string {
 
   // Video embeds: [video: label](url) or [video](url) or [creative-tv](url) or [youtube](url)
   working = working.replace(
-    /\[(?:video|creative-tv|youtube|crtv)(?::\s*([^\]]+))?\]\(((?:https?:\/\/|\/|ipfs:\/\/)[^\s)]+)\)/gi,
+    /\[(?:video|creative-tv|youtube|crtv)(?::\s*([^\]]+))?\]\(((?:https?:\/\/|\/|ipfs:\/\/|lens:\/\/)[^\s)]+)\)/gi,
     (_m, title: string | undefined, url: string) => {
-      const embed = generateVideoEmbedHtml(url, title);
+      const embed = generateVideoEmbedHtml(url, title, true);
       return embed || `<a href="${url}">${title || url}</a>`;
     },
   );
@@ -165,13 +165,13 @@ export function renderMarkdownToSafeHtml(markdown: string): string {
     // Standalone Video Embed: Creative TV, Livepeer, YouTube, Vimeo, direct video
     // Matches standalone video URL or [video: title](url) or [video](url)
     const videoExplicitMatch =
-      /^\[(?:video|creative-tv|youtube|crtv)(?::\s*([^\]]+))?\]\(((?:https?:\/\/|\/|ipfs:\/\/)[^\s)]+)\)$/i.exec(
+      /^\[(?:video|creative-tv|youtube|crtv)(?::\s*([^\]]+))?\]\(((?:https?:\/\/|\/|ipfs:\/\/|lens:\/\/)[^\s)]+)\)$/i.exec(
         line.trim(),
       );
     if (videoExplicitMatch) {
       const customTitle = videoExplicitMatch[1]?.trim();
       const videoUrl = videoExplicitMatch[2]!.trim();
-      const videoHtml = generateVideoEmbedHtml(videoUrl, customTitle);
+      const videoHtml = generateVideoEmbedHtml(videoUrl, customTitle, true);
       if (videoHtml) {
         blocks.push(videoHtml);
         i++;

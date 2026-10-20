@@ -4,6 +4,43 @@ import {
   getDearCreativeApiBaseUrl,
 } from "./config.js";
 
+export type GenerateBannerPayload = {
+  prompt?: string | null;
+  title?: string | null;
+  teaserText?: string | null;
+  slug?: string | null;
+  postId?: string | null;
+  aspectRatio?: "16:9" | "1:1" | "21:9";
+  applyToPost?: boolean;
+};
+
+export type GenerateBannerResponse = {
+  ok: boolean;
+  url: string;
+  uri: string;
+  storageKey: string;
+  mimeType: string;
+  promptUsed: string;
+  provider: string;
+};
+
+export type GenerateVideoPayload = {
+  prompt: string;
+  title?: string | null;
+  slug?: string | null;
+  aspectRatio?: "16:9" | "9:16";
+};
+
+export type GenerateVideoResponse = {
+  ok: boolean;
+  url: string;
+  uri: string;
+  storageKey: string;
+  mimeType: string;
+  promptUsed: string;
+  provider: string;
+};
+
 export type PublishDraftPayload = {
   slug: string;
   title: string;
@@ -15,6 +52,53 @@ export type PublishDraftPayload = {
   sponsorId?: string | null;
   dryRun?: boolean;
 };
+
+export async function generatePostBanner(
+  payload: GenerateBannerPayload,
+  fetchFn: FetchLike = fetch,
+): Promise<GenerateBannerResponse> {
+  assertSafeAdamRuntimeFlags();
+  const base = getDearCreativeApiBaseUrl();
+  const response = await fetchFn(`${base}/api/adam/banners/generate`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = (await response.json()) as GenerateBannerResponse & {
+    error?: string;
+    details?: string;
+  };
+  if (!response.ok) {
+    throw new Error(
+      body.details ?? body.error ?? `banner generation failed (${response.status})`,
+    );
+  }
+  return body;
+}
+
+export async function generatePostVideo(
+  payload: GenerateVideoPayload,
+  fetchFn: FetchLike = fetch,
+): Promise<GenerateVideoResponse> {
+  assertSafeAdamRuntimeFlags();
+  const base = getDearCreativeApiBaseUrl();
+  const response = await fetchFn(`${base}/api/adam/videos/generate`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = (await response.json()) as GenerateVideoResponse & {
+    error?: string;
+    details?: string;
+  };
+  if (!response.ok) {
+    throw new Error(
+      body.details ?? body.error ?? `video generation failed (${response.status})`,
+    );
+  }
+  return body;
+}
+
 
 export type PublishDraftResponse = {
   postId: string;

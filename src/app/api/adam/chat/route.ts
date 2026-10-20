@@ -22,6 +22,7 @@ type ChatRequestBody = {
   history?: StudioChatMessage[];
   attachments?: StudioAttachmentInput[];
   forceCreateDraft?: boolean;
+  forceGenerateBanner?: boolean;
 };
 
 export async function POST(request: Request) {
@@ -101,6 +102,7 @@ export async function POST(request: Request) {
       history,
       attachments,
       forceCreateDraft: Boolean(body.forceCreateDraft),
+      forceGenerateBanner: Boolean(body.forceGenerateBanner),
     });
 
     // Persist Adam model response

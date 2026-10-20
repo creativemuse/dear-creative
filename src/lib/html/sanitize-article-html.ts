@@ -298,6 +298,17 @@ export function sanitizeArticleHtml(raw: string): string {
           },
         };
       },
+      source: (tagName, attribs) => {
+        const src = normalizeUrlAttribute(attribs.src);
+        const resolvedSrc = src ? resolveGroveOrIpfsUrl(src) : "";
+        return {
+          tagName,
+          attribs: {
+            ...(resolvedSrc ? { src: resolvedSrc } : {}),
+            ...(attribs.type ? { type: attribs.type } : { type: "video/mp4" }),
+          },
+        };
+      },
     },
   }).trim();
 }
