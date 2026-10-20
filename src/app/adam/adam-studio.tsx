@@ -751,7 +751,12 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   useEffect(() => {
     return () => {
       if (activeAudioRef.current) {
+        activeAudioRef.current.onended = null;
+        activeAudioRef.current.onerror = null;
         activeAudioRef.current.pause();
+        activeAudioRef.current.removeAttribute?.("src");
+        activeAudioRef.current.load?.();
+        activeAudioRef.current = null;
       }
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
         window.speechSynthesis.cancel();
@@ -762,7 +767,11 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   // --- TTS (Text-to-Speech) ---
   const stopSpeaking = useCallback(() => {
     if (activeAudioRef.current) {
+      activeAudioRef.current.onended = null;
+      activeAudioRef.current.onerror = null;
       activeAudioRef.current.pause();
+      activeAudioRef.current.removeAttribute?.("src");
+      activeAudioRef.current.load?.();
       activeAudioRef.current = null;
     }
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
