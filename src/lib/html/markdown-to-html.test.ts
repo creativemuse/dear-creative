@@ -89,5 +89,43 @@ describe("renderMarkdownToSafeHtml & ensureArticleHtml", () => {
     expect(html).toContain('href="https://x.com/dearcreative"');
     expect(html).toContain('href="https://twitter.com/dearcreative/status/123"');
   });
+
+  it("converts standalone YouTube and Creative TV links into responsive video players", () => {
+    const md = [
+      "Here is a YouTube video:",
+      "",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "",
+      "And here is our Creative TV broadcast:",
+      "",
+      "https://tv.creativeplatform.xyz/watch/crtv-demo-456",
+    ].join("\n");
+
+    const html = renderMarkdownToSafeHtml(md);
+
+    // YouTube iframe
+    expect(html).toContain('class="dear-video-container"');
+    expect(html).toContain('src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"');
+    expect(html).toContain('class="dear-video-iframe"');
+    expect(html).toContain('allowfullscreen');
+
+    // Creative TV iframe
+    expect(html).toContain('src="https://tv.creativeplatform.xyz/embed/crtv-demo-456"');
+    expect(html).toContain('title="Creative TV Player"');
+  });
+
+  it("converts explicit [video](url) and [creative-tv](url) markdown syntax", () => {
+    const md = [
+      "[video: Live Broadcast](https://lvpr.tv/?v=c7b744p7j8l7m7k9)",
+      "",
+      "[creative-tv](https://tv.creativeplatform.xyz/embed/live-feed)",
+    ].join("\n\n");
+
+    const html = renderMarkdownToSafeHtml(md);
+
+    expect(html).toContain('src="https://lvpr.tv/?v=c7b744p7j8l7m7k9"');
+    expect(html).toContain('title="Live Broadcast"');
+    expect(html).toContain('src="https://tv.creativeplatform.xyz/embed/live-feed"');
+  });
 });
 

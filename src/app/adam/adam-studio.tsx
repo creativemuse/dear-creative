@@ -12,6 +12,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useSafePrivy } from "@/components/providers/app-providers";
+import { useToast } from "@/components/ui/toast";
 import type {
   StudioAttachmentInput,
   StudioChatMessage,
@@ -26,9 +27,16 @@ import {
 } from "@/lib/html/markdown-to-html";
 import type { AdminPostRecord } from "@/lib/posts/manage-posts";
 import {
+  removeLeadingBannerFromHtml,
+  removeLeadingBannerFromMarkdown,
+  replaceBannerInHtml,
+  replaceBannerInMarkdown,
+} from "@/lib/posts/banner-swap";
+import {
   PAST_ISSUE_BANNERS,
   resolvePostCoverImage,
 } from "@/lib/posts/post-cover-image";
+import { resolveGroveOrIpfsUrl } from "@/lib/storage/lens-grove";
 
 export type StudioTab = "chat" | "ideas" | "posts" | "approvals" | "schedule";
 type VoiceEngineMode = "google" | "browser";
@@ -307,10 +315,32 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     isAdmin: boolean;
     userId: string | null;
   }>({ checked: false, isAdmin: false, userId: null });
-  const [statusBanner, setStatusBanner] = useState<{
+  const { toast } = useToast();
+  const [statusBanner, setStatusBannerState] = useState<{
     kind: "info" | "success" | "error";
     text: string;
   } | null>(null);
+
+  const setStatusBanner = useCallback(
+    (
+      banner: {
+        kind: "info" | "success" | "error";
+        text: string;
+      } | null,
+    ) => {
+      setStatusBannerState(banner);
+      if (banner) {
+        if (banner.kind === "error") {
+          toast.error(banner.text);
+        } else if (banner.kind === "success") {
+          toast.success(banner.text);
+        } else {
+          toast.info(banner.text);
+        }
+      }
+    },
+    [toast],
+  );
 
   // Chat state
   const [messages, setMessages] = useState<StudioChatMessage[]>([
@@ -338,6 +368,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   const [speakingMessageIdx, setSpeakingMessageIdx] = useState<number | null>(
     null,
   );
+  const [copiedMessageIdx, setCopiedMessageIdx] = useState<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
   const browserRecognitionRef =
@@ -438,8 +469,12 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
       slug: post.slug,
       title: post.title,
       bodyHtml: post.bodyHtml,
+      markdown: post.markdown,
+      emailHtml: post.emailHtml,
     });
-    setEditPostBanner(initialBanner);
+    setEditPostBanner(
+      initialBanner.startsWith("data:image/svg") ? "" : initialBanner,
+    );
   }, []);
 
   const authFetch = useCallback(
@@ -732,6 +767,35 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
       stopSpeaking,
       voiceEngine,
     ],
+  );
+
+  // --- Copy Chat Message ---
+  const handleCopyMessageText = useCallback(
+    async (text: string, idx: number) => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textarea);
+        }
+        setCopiedMessageIdx(idx);
+        toast.success("Message copied to clipboard!");
+        setTimeout(() => {
+          setCopiedMessageIdx((current) => (current === idx ? null : current));
+        }, 2000);
+      } catch {
+        toast.error("Failed to copy text to clipboard.");
+      }
+    },
+    [],
   );
 
   // --- STT (Speech-to-Text) ---
@@ -1387,6 +1451,29 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     }
   }, [authFetch, loadStudioData]);
 
+  // --- Apply or Swap Post Banner (Lens Grove / IPFS / Preset) ---
+  const handleApplyBanner = useCallback(
+    (newBannerUrl: string, altText?: string) => {
+      const resolved = resolveGroveOrIpfsUrl(newBannerUrl.trim());
+      setEditPostBanner(resolved);
+      const effectiveAlt = altText || editPostTitle || "Banner";
+
+      setEditPostMarkdown((prev) =>
+        replaceBannerInMarkdown(prev, resolved, effectiveAlt),
+      );
+      setEditPostHtml((prev) =>
+        replaceBannerInHtml(prev, resolved, effectiveAlt),
+      );
+    },
+    [editPostTitle],
+  );
+
+  const handleClearBanner = useCallback(() => {
+    setEditPostBanner("");
+    setEditPostMarkdown((prev) => removeLeadingBannerFromMarkdown(prev));
+    setEditPostHtml((prev) => removeLeadingBannerFromHtml(prev));
+  }, []);
+
   // --- Upload Banner Image to Lens Grove ---
   const handleUploadBannerToGrove = useCallback(
     async (file: File) => {
@@ -1405,22 +1492,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
         }
         const data = (await res.json()) as { url: string; uri: string };
         const bannerUrl = data.url;
-        setEditPostBanner(bannerUrl);
-        // Prepend or update banner markdown and html
-        setEditPostMarkdown((prev) => {
-          const clean = prev.replace(
-            /^!\[(?:Banner|Cover|Header)\]\([^\s)]+\)\n\n?/i,
-            "",
-          );
-          return `![Banner](${bannerUrl})\n\n${clean}`;
-        });
-        setEditPostHtml((prev) => {
-          const clean = prev.replace(
-            /^<img[^>]*class=["']dear-post-banner["'][^>]*>\s*/i,
-            "",
-          );
-          return `<img src="${bannerUrl}" alt="${editPostTitle}" class="dear-post-banner" />\n${clean}`;
-        });
+        handleApplyBanner(bannerUrl, editPostTitle);
         setStatusBanner({
           kind: "success",
           text: `Banner uploaded to Lens Grove Storage successfully! (${bannerUrl})`,
@@ -1435,7 +1507,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
         setIsUploadingBanner(false);
       }
     },
-    [authFetch, editPostTitle],
+    [authFetch, editPostTitle, handleApplyBanner],
   );
 
   // --- Save Edited Post (Published or Draft) ---
@@ -1608,7 +1680,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
   if (!ready) {
     return (
-      <div className="mx-auto max-w-5xl px-6 py-16">
+      <div className="mx-auto w-full max-w-[1800px] px-4 sm:px-6 lg:px-8 py-10">
         <p className="text-zinc-500">Loading Adam Editorial Studio…</p>
       </div>
     );
@@ -1740,7 +1812,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-12">
+    <div className="mx-auto w-full max-w-[1800px] px-4 sm:px-6 lg:px-8 py-10">
       {/* Studio Header */}
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 pb-6 dark:border-zinc-800">
         <div>
@@ -1995,8 +2067,8 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
       {/* TAB 1: CHAT + MULTIMODAL UPLOADS + VOICE */}
       {activeTab === "chat" ? (
-        <section className="mt-6 grid gap-6 lg:grid-cols-3">
-          <div className="flex flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs lg:col-span-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+        <section className="mt-6 grid gap-6 lg:grid-cols-12">
+          <div className="flex flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs lg:col-span-8 xl:col-span-9 dark:border-zinc-800 dark:bg-zinc-900/60">
             {/* Thread Header Bar */}
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-3 dark:border-zinc-800/80">
               <div className="flex max-w-full items-center gap-1.5 overflow-x-auto py-0.5">
@@ -2237,6 +2309,60 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                         ))}
                       </div>
                     ) : null}
+
+                    {/* Copy text icon at bottom left of chat bubble */}
+                    <div className="mt-2 flex items-center justify-start border-t border-black/5 pt-1.5 dark:border-white/5">
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyMessageText(msg.content, idx)}
+                        aria-label="Copy message text"
+                        title="Copy text"
+                        className={`group inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-xs transition ${
+                          msg.role === "user"
+                            ? "text-zinc-400 hover:text-white dark:text-zinc-500 dark:hover:text-zinc-900"
+                            : "text-zinc-400 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
+                        }`}
+                      >
+                        {copiedMessageIdx === idx ? (
+                          <>
+                            <svg
+                              className="h-3.5 w-3.5 text-emerald-500"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                            <span className="text-[11px] font-medium text-emerald-500">
+                              Copied
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <svg
+                              className="h-3.5 w-3.5 transition group-hover:scale-105"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            </svg>
+                            <span className="text-[11px] opacity-80 group-hover:opacity-100">
+                              Copy
+                            </span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -2437,7 +2563,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           </div>
 
           {/* Voice & Multimodal Settings Sidebar */}
-          <aside className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
+          <aside className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs lg:col-span-4 xl:col-span-3 dark:border-zinc-800 dark:bg-zinc-900/60">
             <div>
               <h2 className="text-base font-semibold">Voice &amp; Audio</h2>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -2656,37 +2782,90 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                       type="button"
                       onClick={() =>
                         setIdeaContent(
-                          (prev) => `${prev} [button: Read More →](https://creativeplatform.xyz) `,
+                          (prev) =>
+                            `${prev} [button: Custom Button Label →](https://example.com) `,
                         )
                       }
                       className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                      title="Insert Button"
+                      title="Insert Button: [button: Label →](https://...)"
                     >
                       🔘 Button
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        let url = "";
+                        if (typeof window !== "undefined") {
+                          url =
+                            window
+                              .prompt("Enter image URL (https://...):", "")
+                              ?.trim() || "";
+                        }
+                        const alt = url
+                          ? window
+                              .prompt(
+                                "Enter image description (alt text):",
+                                "Image description",
+                              )
+                              ?.trim() || "Image description"
+                          : "Image description";
+                        const finalUrl = url || "https://example.com/image.jpg";
                         setIdeaContent(
-                          (prev) => `${prev} [share: Share this Issue ↗](https://twitter.com/intent/tweet?text=Check%20out%20this%20issue%20of%20Dear%20Creative) `,
-                        )
-                      }
+                          (prev) => `${prev}\n\n![${alt}](${finalUrl})\n\n`,
+                        );
+                      }}
                       className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                      title="Insert Share Button"
+                      title="Insert Image: ![alt](url)"
                     >
-                      📢 Share
+                      🖼️ Image
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        let url = "";
+                        if (typeof window !== "undefined") {
+                          url =
+                            window
+                              .prompt(
+                                "Enter X / Twitter post link (e.g. https://x.com/username/status/1234567890):",
+                                "",
+                              )
+                              ?.trim() || "";
+                        }
+                        const finalUrl =
+                          url || "https://x.com/username/status/1234567890";
                         setIdeaContent(
-                          (prev) => `${prev} [subscribe: Subscribe to Dear Creative →](/#subscribe) `,
-                        )
-                      }
+                          (prev) => `${prev}\n\n${finalUrl}\n\n`,
+                        );
+                      }}
                       className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                      title="Insert Subscribe Button"
+                      title="Insert Twitter / X Post Card Embed"
                     >
-                      ✉️ Subscribe
+                      𝕏 Post Card
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        let url = "";
+                        if (typeof window !== "undefined") {
+                          url =
+                            window
+                              .prompt(
+                                "Enter Creative TV or YouTube video link (e.g. https://tv.creativeplatform.xyz/... or https://youtube.com/watch?v=...):",
+                                "",
+                              )
+                              ?.trim() || "";
+                        }
+                        const finalUrl =
+                          url || "https://tv.creativeplatform.xyz/watch/crtv-demo";
+                        setIdeaContent(
+                          (prev) => `${prev}\n\n${finalUrl}\n\n`,
+                        );
+                      }}
+                      className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                      title="Insert Video Player (Creative TV or YouTube)"
+                    >
+                      📹 Video
                     </button>
                     <button
                       type="button"
@@ -2909,9 +3088,9 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
       {/* TAB 2.5: EDIT PUBLISHED & DRAFT POSTS */}
       {activeTab === "posts" ? (
-        <section className="mt-6 grid gap-6 lg:grid-cols-3">
+        <section className="mt-6 grid gap-6 lg:grid-cols-12">
           {/* Left Column: Post Browser */}
-          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
+          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs lg:col-span-4 xl:col-span-3 dark:border-zinc-800 dark:bg-zinc-900/60">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-base font-semibold">Posts &amp; Archive</h2>
               <span className="text-xs text-zinc-500">
@@ -3021,7 +3200,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
           {/* Right Column: Post Editor */}
           <form
             onSubmit={(e) => void handleSaveEditedPost(e)}
-            className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-xs lg:col-span-2 dark:border-zinc-800 dark:bg-zinc-900/60"
+            className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-xs lg:col-span-8 xl:col-span-9 dark:border-zinc-800 dark:bg-zinc-900/60"
           >
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 pb-4 dark:border-zinc-800">
               <div>
@@ -3184,137 +3363,134 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
                 <div className="grid items-center gap-4 sm:grid-cols-4">
                   {/* Square Thumbnail Preview */}
-                  <div className="flex flex-col items-center gap-1 sm:items-start">
-                    <span className="text-[10px] font-medium text-zinc-400">
-                      Thumbnail (1:1)
-                    </span>
-                    <div className="relative aspect-square h-20 w-20 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 sm:h-24 sm:w-24 dark:border-zinc-800 dark:bg-zinc-900">
-                      {editPostBanner ? (
-                        <img
-                          src={editPostBanner}
-                          alt="Thumbnail preview"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center p-1 text-center text-[10px] text-zinc-400">
-                          Square Thumbnail
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Hero Banner Preview & URL Input */}
-                  <div className="space-y-2 sm:col-span-3">
-                    <div className="relative aspect-[21/9] max-h-36 w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
-                      {editPostBanner ? (
-                        <img
-                          src={editPostBanner}
-                          alt="Hero banner preview"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
-                          Widescreen Hero Banner
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editPostBanner}
-                        onChange={(e) => {
-                          const val = e.target.value.trim();
-                          setEditPostBanner(val);
-                          if (val) {
-                            setEditPostMarkdown((prev) => {
-                              const clean = prev.replace(
-                                /^!\[(?:Banner|Cover|Header)\]\([^\s)]+\)\n\n?/i,
-                                "",
-                              );
-                              return `![Banner](${val})\n\n${clean}`;
-                            });
-                          }
-                        }}
-                        placeholder="https://api.grove.storage/… or image URL"
-                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 font-mono text-xs text-zinc-800 placeholder-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
-                      />
-                      {editPostBanner ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditPostBanner("");
-                            setEditPostMarkdown((prev) =>
-                              prev.replace(
-                                /^!\[(?:Banner|Cover|Header)\]\([^\s)]+\)\n\n?/i,
-                                "",
-                              ),
-                            );
-                            setEditPostHtml((prev) =>
-                              prev.replace(
-                                /^<img[^>]*class=["']dear-post-banner["'][^>]*>\s*/i,
-                                "",
-                              ),
-                            );
-                          }}
-                          className="shrink-0 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-900"
-                          title="Reset Banner"
-                        >
-                          Clear
-                        </button>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-2.5">
-                      <p className="mb-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-                        Or pick from historic <em>Dear Creative</em> banner editions:
-                      </p>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                        {PAST_ISSUE_BANNERS.map((banner) => {
-                          const isSelected = editPostBanner === banner.src;
-                          return (
-                            <button
-                              key={banner.slug}
-                              type="button"
-                              onClick={() => {
-                                setEditPostBanner(banner.src);
-                                setEditPostMarkdown((prev) => {
-                                  const clean = prev.replace(
-                                    /^!\[(?:Banner|Cover|Header)\]\([^\s)]+\)\n\n?/i,
-                                    "",
-                                  );
-                                  return `![Banner](${banner.src})\n\n${clean}`;
-                                });
-                                setEditPostHtml((prev) => {
-                                  const clean = prev.replace(
-                                    /^<img[^>]*class=["']dear-post-banner["'][^>]*>\s*/i,
-                                    "",
-                                  );
-                                  return `<img src="${banner.src}" alt="${banner.alt}" class="dear-post-banner w-full rounded-2xl mb-8 object-cover max-h-[420px]" />\n\n${clean}`;
-                                });
-                              }}
-                              className={`group relative overflow-hidden rounded-md border text-left transition ${
-                                isSelected
-                                  ? "border-amber-500 ring-2 ring-amber-500/40"
-                                  : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
-                              }`}
-                              title={banner.title}
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {(() => {
+                    const previewBanner =
+                      editPostBanner ||
+                      resolvePostCoverImage({
+                        slug: editPostSlug,
+                        title: editPostTitle,
+                        bodyHtml: editPostHtml,
+                        markdown: editPostMarkdown,
+                      });
+                    return (
+                      <>
+                        <div className="flex flex-col items-center gap-1 sm:items-start">
+                          <span className="text-[10px] font-medium text-zinc-400">
+                            Thumbnail (1:1)
+                          </span>
+                          <div className="relative aspect-square h-20 w-20 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 sm:h-24 sm:w-24 dark:border-zinc-800 dark:bg-zinc-900">
+                            {previewBanner ? (
                               <img
-                                src={banner.src}
-                                alt={banner.alt}
-                                className="h-12 w-full object-cover"
+                                src={previewBanner}
+                                alt="Thumbnail preview"
+                                className="h-full w-full object-cover"
                               />
-                              <div className="truncate bg-zinc-950/85 px-1.5 py-1 text-[10px] font-medium text-zinc-200">
-                                {banner.title.split("•")[0]?.trim() || banner.slug}
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center p-1 text-center text-[10px] text-zinc-400">
+                                Square Thumbnail
                               </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Hero Banner Preview & URL Input */}
+                        <div className="space-y-2 sm:col-span-3">
+                          <div className="relative aspect-[21/9] max-h-36 w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
+                            {previewBanner ? (
+                              <img
+                                src={previewBanner}
+                                alt="Hero banner preview"
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
+                                Widescreen Hero Banner
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editPostBanner}
+                              onChange={(e) => {
+                                setEditPostBanner(e.target.value);
+                              }}
+                              onBlur={(e) => {
+                                const val = e.target.value.trim();
+                                if (val) {
+                                  handleApplyBanner(val);
+                                } else {
+                                  handleClearBanner();
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  const val = (
+                                    e.target as HTMLInputElement
+                                  ).value.trim();
+                                  if (val) {
+                                    handleApplyBanner(val);
+                                  } else {
+                                    handleClearBanner();
+                                  }
+                                }
+                              }}
+                              placeholder="https://api.grove.storage/… or ipfs://… or image URL"
+                              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 font-mono text-xs text-zinc-800 placeholder-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+                            />
+                            {editPostBanner ? (
+                              <button
+                                type="button"
+                                onClick={handleClearBanner}
+                                className="shrink-0 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                                title="Reset Banner"
+                              >
+                                Clear
+                              </button>
+                            ) : null}
+                          </div>
+
+                          <div className="mt-2.5">
+                            <p className="mb-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                              Or pick from historic <em>Dear Creative</em> banner editions:
+                            </p>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                              {PAST_ISSUE_BANNERS.map((banner) => {
+                                const isSelected = editPostBanner === banner.src;
+                                return (
+                                  <button
+                                    key={banner.slug}
+                                    type="button"
+                                    onClick={() => {
+                                      handleApplyBanner(banner.src, banner.alt);
+                                    }}
+                                    className={`group relative overflow-hidden rounded-md border text-left transition ${
+                                      isSelected
+                                        ? "border-amber-500 ring-2 ring-amber-500/40"
+                                        : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
+                                    }`}
+                                    title={banner.title}
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={banner.src}
+                                      alt={banner.alt}
+                                      className="h-12 w-full object-cover"
+                                    />
+                                    <div className="truncate bg-zinc-950/85 px-1.5 py-1 text-[10px] font-medium text-zinc-200">
+                                      {banner.title.split("•")[0]?.trim() || banner.slug}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -3472,39 +3648,94 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
                         onClick={() =>
                           setEditPostMarkdown(
                             (prev) =>
-                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}[button: Explore Now →](https://creativeplatform.xyz)\n\n`,
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}[button: Custom Button Label →](https://example.com)\n\n`,
                           )
                         }
                         className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                        title="Insert Custom Button"
+                        title="Insert Button: [button: Label →](https://...)"
                       >
                         🔘 Button
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          let url = "";
+                          if (typeof window !== "undefined") {
+                            url =
+                              window
+                                .prompt("Enter image URL (https://...):", "")
+                                ?.trim() || "";
+                          }
+                          const alt = url
+                            ? window
+                                .prompt(
+                                  "Enter image description (alt text):",
+                                  "Image description",
+                                )
+                                ?.trim() || "Image description"
+                            : "Image description";
+                          const finalUrl = url || "https://example.com/image.jpg";
                           setEditPostMarkdown(
                             (prev) =>
-                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}[share: Share on X ↗](https://twitter.com/intent/tweet?text=Check%20out%20this%20issue%20from%20Dear%20Creative)\n\n`,
-                          )
-                        }
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}![${alt}](${finalUrl})\n\n`,
+                          );
+                        }}
                         className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                        title="Insert Share Button"
+                        title="Insert Image: ![alt](url)"
                       >
-                        📢 Share
+                        🖼️ Image
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          let url = "";
+                          if (typeof window !== "undefined") {
+                            url =
+                              window
+                                .prompt(
+                                  "Enter X / Twitter post link (e.g. https://x.com/username/status/1234567890):",
+                                  "",
+                                )
+                                ?.trim() || "";
+                          }
+                          const finalUrl =
+                            url ||
+                            "https://x.com/username/status/1234567890";
                           setEditPostMarkdown(
                             (prev) =>
-                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}[subscribe: Subscribe to Dear Creative →](/#subscribe)\n\n`,
-                          )
-                        }
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}${finalUrl}\n\n`,
+                          );
+                        }}
                         className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                        title="Insert Subscribe Button"
+                        title="Insert Twitter / X Post Card Embed"
                       >
-                        ✉️ Subscribe
+                        𝕏 Post Card
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          let url = "";
+                          if (typeof window !== "undefined") {
+                            url =
+                              window
+                                .prompt(
+                                  "Enter Creative TV or YouTube video link (e.g. https://tv.creativeplatform.xyz/... or https://youtube.com/watch?v=...):",
+                                  "",
+                                )
+                                ?.trim() || "";
+                          }
+                          const finalUrl =
+                            url ||
+                            "https://tv.creativeplatform.xyz/watch/crtv-demo";
+                          setEditPostMarkdown(
+                            (prev) =>
+                              `${prev}${prev.endsWith("\n") || !prev ? "" : "\n\n"}${finalUrl}\n\n`,
+                          );
+                        }}
+                        className="rounded px-2 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="Insert Video Player (Creative TV or YouTube)"
+                      >
+                        📹 Video
                       </button>
                       <button
                         type="button"

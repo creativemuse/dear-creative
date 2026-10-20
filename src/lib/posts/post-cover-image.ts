@@ -1,3 +1,5 @@
+import { resolveGroveOrIpfsUrl } from "@/lib/storage/lens-grove";
+
 /**
  * Post cover image & banner resolver.
  * Handles explicit cover images, images embedded in bodyHtml/Markdown,
@@ -12,13 +14,16 @@ export function extractFirstImageFromHtml(
   // HTML <img ... src="..." ...>
   const imgMatch = /<img\s+[^>]*src=["']([^"']+)["']/i.exec(html);
   if (imgMatch && imgMatch[1]) {
-    return imgMatch[1];
+    return resolveGroveOrIpfsUrl(imgMatch[1].trim());
   }
 
   // Markdown ![alt](url)
-  const mdMatch = /!\[.*?\]\(((?:https?:\/\/|\/)[^\s)]+)\)/i.exec(html);
+  const mdMatch =
+    /!\[[\s\S]*?\]\s*\(\s*((?:https?:\/\/|\/|ipfs:\/\/|lens:\/\/|data:image\/)[^\s)]+)\s*\)/i.exec(
+      html,
+    );
   if (mdMatch && mdMatch[1]) {
-    return mdMatch[1];
+    return resolveGroveOrIpfsUrl(mdMatch[1].trim());
   }
 
   return null;
@@ -229,12 +234,14 @@ export function generateDeterministicBannerDataUrl(options: {
 export function resolvePostCoverImage(post: {
   coverImage?: string | null;
   bodyHtml?: string | null;
+  markdown?: string | null;
+  emailHtml?: string | null;
   slug?: string;
   title?: string;
 }): string {
   // 1. Explicit cover image
   if (post.coverImage && post.coverImage.trim()) {
-    return post.coverImage.trim();
+    return resolveGroveOrIpfsUrl(post.coverImage.trim());
   }
 
   // 2. Sample post special asset
@@ -242,13 +249,29 @@ export function resolvePostCoverImage(post: {
     return "/images/hello-dear-creative-banner.jpg";
   }
 
-  // 3. Image extracted from post body
+  // 3. Image extracted from post bodyHtml
   const bodyImage = extractFirstImageFromHtml(post.bodyHtml);
   if (bodyImage) {
     return bodyImage;
   }
 
-  // 4. Deterministic vector banner
+  // 4. Image extracted from post markdown
+  if (post.markdown) {
+    const mdImage = extractFirstImageFromHtml(post.markdown);
+    if (mdImage) {
+      return mdImage;
+    }
+  }
+
+  // 5. Image extracted from emailHtml
+  if (post.emailHtml) {
+    const emailImage = extractFirstImageFromHtml(post.emailHtml);
+    if (emailImage) {
+      return emailImage;
+    }
+  }
+
+  // 6. Deterministic vector banner
   return generateDeterministicBannerDataUrl({
     title: post.title,
     slug: post.slug,

@@ -3,12 +3,15 @@ export const NEWSLETTER_POSTAL_ADDRESS =
 
 export const UNSUBSCRIBE_PAGE_PATH = "/unsubscribe";
 
+export const CREATIVE_X_URL =
+  process.env.NEXT_PUBLIC_X_URL || "https://x.com/CreativeCrtv";
+
 export function SiteFooter() {
-  const xProfileUrl = process.env.NEXT_PUBLIC_X_URL || "https://x.com";
+  const xProfileUrl = CREATIVE_X_URL;
 
   return (
-    <footer className="border-t border-zinc-200 px-6 py-8 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
-      <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <footer className="border-t border-zinc-200 py-8 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+      <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-6 lg:px-8">
         <div>
           <p>{NEWSLETTER_POSTAL_ADDRESS}</p>
           <p className="mt-1">

@@ -6,7 +6,7 @@ import {
 } from "./site-header";
 
 describe("SiteHeader navigation config", () => {
-  it("includes links for Home, Posts, Subscribe, Adam Studio, Approvals, and Admin", () => {
+  it("includes links for Home, Posts, Subscribe, Studio, Approvals, and Admin", () => {
     const hrefs = SITE_NAV_LINKS.map((link) => link.href);
     expect(hrefs).toEqual([
       "/",
@@ -23,7 +23,12 @@ describe("SiteHeader navigation config", () => {
     expect(adminLink.label).toBe("Sign-In/Sign-Out");
   });
 
-  it("filters out Adam Studio and Approvals when not signed in", () => {
+  it("labels the adam link as Studio", () => {
+    const studioLink = SITE_NAV_LINKS.find((l) => l.href === "/adam")!;
+    expect(studioLink.label).toBe("Studio");
+  });
+
+  it("filters out Studio and Approvals when not signed in", () => {
     const unauthenticatedLinks = getVisibleNavLinks(false);
     const unauthenticatedHrefs = unauthenticatedLinks.map((l) => l.href);
     expect(unauthenticatedHrefs).toEqual([
@@ -36,7 +41,7 @@ describe("SiteHeader navigation config", () => {
     expect(unauthenticatedHrefs).not.toContain("/approvals");
   });
 
-  it("shows Adam Studio and Approvals when signed in", () => {
+  it("shows Studio and Approvals when signed in", () => {
     const authenticatedLinks = getVisibleNavLinks(true);
     const authenticatedHrefs = authenticatedLinks.map((l) => l.href);
     expect(authenticatedHrefs).toEqual([

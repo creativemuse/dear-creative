@@ -92,7 +92,7 @@ export function AdminConsole() {
               <p>
                 You can authenticate using your <code>ADAM_API_TOKEN</code> Studio Key directly on{" "}
                 <Link href="/adam" className="font-bold underline">
-                  Adam Studio
+                  Studio
                 </Link>.
               </p>
             </div>
@@ -159,7 +159,7 @@ export function AdminConsole() {
               href="/adam"
               className="flex flex-col rounded-xl border border-zinc-200 p-3.5 hover:border-zinc-400 hover:bg-zinc-50 transition dark:border-zinc-800 dark:hover:bg-zinc-800/60"
             >
-              <span className="text-sm font-semibold">Adam Studio →</span>
+              <span className="text-sm font-semibold">Studio →</span>
               <span className="mt-1 text-[11px] text-zinc-500">
                 Multimodal agent &amp; drafts
               </span>

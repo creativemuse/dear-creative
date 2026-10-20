@@ -16,7 +16,7 @@ export const SITE_NAV_LINKS: readonly SiteNavLink[] = [
   { href: "/", label: "Home", matchPrefix: false },
   { href: "/posts", label: "Posts", matchPrefix: true },
   { href: "/subscribe", label: "Subscribe", matchPrefix: true },
-  { href: "/adam", label: "Adam Studio", matchPrefix: true, requiresAuth: true },
+  { href: "/adam", label: "Studio", matchPrefix: true, requiresAuth: true },
   { href: "/approvals", label: "Approvals", matchPrefix: true, requiresAuth: true },
   { href: "/admin", label: "Sign-In/Sign-Out", matchPrefix: true },
 ] as const;
@@ -48,7 +48,7 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/90 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
+      <div className="mx-auto flex w-full max-w-[1800px] items-center justify-between px-4 sm:px-6 lg:px-8 py-3.5">
         <div className="flex items-center gap-3">
           <Link
             href="/"
@@ -118,12 +118,12 @@ export function SiteHeader() {
             );
           })}
           <a
-            href={process.env.NEXT_PUBLIC_X_URL || "https://x.com"}
+            href={process.env.NEXT_PUBLIC_X_URL || "https://x.com/CreativeCrtv"}
             target="_blank"
             rel="noopener noreferrer"
             className="ml-1 flex h-8 w-8 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
-            title="Dear Creative on 𝕏"
-            aria-label="Dear Creative on 𝕏"
+            title="Creative on 𝕏 (@CreativeCrtv)"
+            aria-label="Creative on 𝕏 (@CreativeCrtv)"
           >
             <span className="text-xs font-bold">𝕏</span>
           </a>
@@ -201,6 +201,21 @@ export function SiteHeader() {
                 </li>
               );
             })}
+            <li className="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+              <a
+                href={process.env.NEXT_PUBLIC_X_URL || "https://x.com/CreativeCrtv"}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                aria-label="Creative on 𝕏 (@CreativeCrtv)"
+              >
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-900 text-xs text-white dark:bg-white dark:text-zinc-900">
+                  𝕏
+                </span>
+                <span>Follow on 𝕏 (@CreativeCrtv)</span>
+              </a>
+            </li>
           </ul>
         </nav>
       ) : null}
