@@ -2,12 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { stripHtmlTags } from "@/lib/posts/reading-time";
-import { GaplessAudioQueue } from "@/lib/audio/gapless-audio-queue";
-import {
-  getKokoroTTSClient,
-  KokoroVoice,
-  SynthesisProgress,
-} from "@/lib/audio/kokoro-tts-client";
+
+export type GoogleVoice = "Puck" | "Aoede";
 
 type DispatchAudioPlayerProps = {
   slug: string;
@@ -18,30 +14,44 @@ type DispatchAudioPlayerProps = {
 };
 
 export function DispatchAudioPlayer({
+  slug,
   title,
   excerpt,
   bodyHtml,
   listenMinutes = 2,
 }: DispatchAudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [playbackRate, setPlaybackRate] = useState<1 | 1.25 | 1.5>(1);
-  const [voice, setVoice] = useState<KokoroVoice>("am_adam");
+  const [voice, setVoice] = useState<GoogleVoice>("Puck");
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration] = useState(listenMinutes * 60);
+  const [duration, setDuration] = useState(listenMinutes * 60);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [isUsingFallbackSpeech, setIsUsingFallbackSpeech] = useState(false);
+  const [useBrowserSpeech, setUseBrowserSpeech] = useState(false);
 
-  const queueRef = useRef<GaplessAudioQueue | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCacheRef = useRef<Record<string, string>>({});
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
 
   const plainText = `${title}. ${excerpt ? excerpt + ". " : ""}${stripHtmlTags(bodyHtml ?? "")}`;
 
-  // Fallback to local Web Speech API
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  // Fallback to native Web Speech API
   const fallbackToBrowserSpeech = useCallback(() => {
-    setIsUsingFallbackSpeech(true);
+    setUseBrowserSpeech(true);
     setStatusMessage(null);
     setIsLoading(false);
 
@@ -51,192 +61,206 @@ export function DispatchAudioPlayer({
       utterance.rate = playbackRate;
       utterance.onend = () => {
         setIsPlaying(false);
-        setIsPaused(false);
-        setCurrentTime(duration);
+        setCurrentTime(0);
       };
       utteranceRef.current = utterance;
       window.speechSynthesis.speak(utterance);
       setIsPlaying(true);
-      setIsPaused(false);
     }
-  }, [plainText, playbackRate, duration]);
+  }, [plainText, playbackRate]);
 
-  // Initialize or retrieve queue
-  const getQueue = useCallback(() => {
-    if (!queueRef.current) {
-      queueRef.current = new GaplessAudioQueue({
-        sampleRate: 24000,
-        onPlaybackStateChange: (playing) => {
-          setIsPlaying(playing);
-          if (!playing && !isPaused) {
-            setIsPaused(false);
-          }
-        },
-        onEnded: () => {
-          setIsPlaying(false);
-          setIsPaused(false);
-          setCurrentTime(duration);
-        },
-      });
-    }
-    return queueRef.current;
-  }, [duration, isPaused]);
+  // Attach audio element listeners
+  const setupAudioElement = useCallback(
+    (audio: HTMLAudioElement) => {
+      audio.playbackRate = playbackRate;
 
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (queueRef.current) {
-        queueRef.current.stop();
-      }
-      getKokoroTTSClient().stop();
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, []);
+      audio.onloadedmetadata = () => {
+        if (audio.duration && !Number.isNaN(audio.duration) && audio.duration > 0) {
+          setDuration(audio.duration);
+        }
+      };
 
-  // Time tracker effect
-  useEffect(() => {
-    if (isPlaying && !isPaused) {
-      timerRef.current = setInterval(() => {
-        setCurrentTime((prev) => {
-          const next = prev + 0.25 * playbackRate;
-          return next >= duration ? duration : next;
-        });
-      }, 250);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    }
+      audio.ontimeupdate = () => {
+        setCurrentTime(audio.currentTime);
+      };
 
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, [isPlaying, isPaused, duration, playbackRate]);
+      audio.onended = () => {
+        setIsPlaying(false);
+        setCurrentTime(0);
+      };
 
-  // Handle Play/Pause
+      audio.onerror = () => {
+        console.warn("Audio playback error, switching to Web Speech fallback");
+        fallbackToBrowserSpeech();
+      };
+    },
+    [playbackRate, fallbackToBrowserSpeech],
+  );
+
+  // Toggle play/pause
   const handleTogglePlay = useCallback(async () => {
-    const queue = getQueue();
-
     // 1. If currently playing, pause
-    if (isPlaying && !isPaused) {
-      if (isUsingFallbackSpeech) {
+    if (isPlaying) {
+      if (useBrowserSpeech) {
         if (typeof window !== "undefined" && "speechSynthesis" in window) {
           window.speechSynthesis.pause();
         }
-      } else {
-        await queue.pause();
+      } else if (audioRef.current) {
+        audioRef.current.pause();
       }
-      setIsPaused(true);
       setIsPlaying(false);
       return;
     }
 
-    // 2. If paused, resume
-    if (isPaused) {
-      if (isUsingFallbackSpeech) {
-        if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    // 2. If using browser speech fallback
+    if (useBrowserSpeech) {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        if (window.speechSynthesis.paused) {
           window.speechSynthesis.resume();
+          setIsPlaying(true);
+        } else {
+          fallbackToBrowserSpeech();
         }
-      } else {
-        await queue.resume();
       }
-      setIsPaused(false);
+      return;
+    }
+
+    // 3. If audio is already loaded and paused, resume playback
+    if (
+      audioRef.current &&
+      audioRef.current.src &&
+      audioRef.current.currentTime > 0 &&
+      !audioRef.current.ended
+    ) {
+      audioRef.current.playbackRate = playbackRate;
+      void audioRef.current.play();
       setIsPlaying(true);
       return;
     }
 
-    // 3. Fresh start: initialize Kokoro-82M on-device synthesis
+    // 4. Check in-memory audio cache for current voice
+    const cachedSrc = audioCacheRef.current[voice];
+    if (cachedSrc) {
+      if (!audioRef.current) {
+        audioRef.current = new Audio(cachedSrc);
+      } else {
+        audioRef.current.src = cachedSrc;
+      }
+      setupAudioElement(audioRef.current);
+      audioRef.current.currentTime = 0;
+      await audioRef.current.play();
+      setIsPlaying(true);
+      return;
+    }
+
+    // 5. Fetch synthesized narration from Google Voice Engine
     setIsLoading(true);
-    setStatusMessage("Preparing Kokoro-82M engine...");
+    setStatusMessage("Synthesizing narration with Google Voice...");
 
     try {
-      // Initialize audio context on explicit user gesture
-      queue.init();
-      queue.setPlaybackRate(playbackRate);
+      const res = await fetch(
+        `/api/posts/${encodeURIComponent(slug)}/audio?voice=${encodeURIComponent(voice)}`,
+      );
 
-      const client = getKokoroTTSClient();
+      if (!res.ok) {
+        throw new Error(`Audio route returned HTTP ${res.status}`);
+      }
 
-      await client.streamTextToSpeech(plainText, queue, {
-        voice,
-        speed: playbackRate,
-        onProgress: (prog: SynthesisProgress) => {
-          if (prog.status === "loading") {
-            setStatusMessage("Loading on-device model...");
-          } else if (prog.status === "synthesizing") {
-            setStatusMessage(null);
-            setIsLoading(false);
-          } else if (prog.status === "completed") {
-            setStatusMessage(null);
-            setIsLoading(false);
-          }
-        },
-        onError: (err) => {
-          console.warn("Kokoro TTS playback encountered error, switching to Web Speech fallback:", err);
-          fallbackToBrowserSpeech();
-        },
-      });
+      const data = (await res.json()) as {
+        audioBase64?: string;
+        mimeType?: string;
+        provider?: string;
+        fallbackToLocalWebSpeech?: boolean;
+        error?: string;
+      };
 
-      setIsPlaying(true);
-      setIsPaused(false);
+      if (data.audioBase64) {
+        const audioSrc = `data:${data.mimeType || "audio/mp3"};base64,${data.audioBase64}`;
+        audioCacheRef.current[voice] = audioSrc;
+
+        if (!audioRef.current) {
+          audioRef.current = new Audio(audioSrc);
+        } else {
+          audioRef.current.src = audioSrc;
+        }
+
+        setupAudioElement(audioRef.current);
+        audioRef.current.currentTime = 0;
+        await audioRef.current.play();
+        setIsPlaying(true);
+        setStatusMessage(null);
+      } else {
+        fallbackToBrowserSpeech();
+      }
     } catch (err) {
-      console.warn("Kokoro engine could not start, falling back to Web Speech:", err);
+      console.warn("Google Voice synthesis unavailable, falling back to Web Speech:", err);
       fallbackToBrowserSpeech();
     } finally {
       setIsLoading(false);
     }
-  }, [isPlaying, isPaused, getQueue, isUsingFallbackSpeech, playbackRate, plainText, voice, fallbackToBrowserSpeech]);
+  }, [
+    isPlaying,
+    useBrowserSpeech,
+    voice,
+    slug,
+    playbackRate,
+    fallbackToBrowserSpeech,
+    setupAudioElement,
+  ]);
 
-  // Handle speed change
+  // Handle speed change (1x -> 1.25x -> 1.5x)
   const handleSpeedToggle = () => {
     const nextRate: 1 | 1.25 | 1.5 =
       playbackRate === 1 ? 1.25 : playbackRate === 1.25 ? 1.5 : 1;
     setPlaybackRate(nextRate);
 
-    if (queueRef.current) {
-      queueRef.current.setPlaybackRate(nextRate);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = nextRate;
     }
 
-    if (isUsingFallbackSpeech && isPlaying && typeof window !== "undefined") {
+    if (useBrowserSpeech && isPlaying && typeof window !== "undefined") {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(plainText);
       utterance.rate = nextRate;
-      utterance.onend = () => {
-        setIsPlaying(false);
-        setIsPaused(false);
-      };
+      utterance.onend = () => setIsPlaying(false);
       utteranceRef.current = utterance;
       window.speechSynthesis.speak(utterance);
     }
   };
 
-  // Voice toggle between Adam and Heart
+  // Switch voice between Puck and Aoede
   const handleVoiceToggle = () => {
-    const nextVoice: KokoroVoice = voice === "am_adam" ? "af_heart" : "am_adam";
+    const nextVoice: GoogleVoice = voice === "Puck" ? "Aoede" : "Puck";
     setVoice(nextVoice);
 
-    // If currently active, stop and re-stream with the new voice
-    if (isPlaying || isPaused) {
-      if (queueRef.current) {
-        queueRef.current.stop();
+    // If currently active, reset and re-cue with the new voice
+    if (isPlaying) {
+      if (audioRef.current) {
+        audioRef.current.pause();
       }
-      getKokoroTTSClient().stop();
       setIsPlaying(false);
-      setIsPaused(false);
       setCurrentTime(0);
     }
   };
 
+  // Scrubbable timeline seek handler
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!progressBarRef.current || duration <= 0) return;
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+    const seekTime = ratio * duration;
+
+    setCurrentTime(seekTime);
+    if (audioRef.current && !useBrowserSpeech) {
+      audioRef.current.currentTime = seekTime;
+    }
+  };
+
   const formatSeconds = (sec: number) => {
-    const mins = Math.floor(sec / 60);
-    const remainder = Math.floor(sec % 60);
+    const safeSec = Math.max(0, Math.floor(sec));
+    const mins = Math.floor(safeSec / 60);
+    const remainder = safeSec % 60;
     return `${mins}:${remainder < 10 ? "0" : ""}${remainder}`;
   };
 
@@ -253,12 +277,10 @@ export function DispatchAudioPlayer({
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white shadow-sm transition hover:scale-105 hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
             aria-label={
               isLoading
-                ? "Loading Kokoro-82M model"
+                ? "Synthesizing audio narration"
                 : isPlaying
                   ? "Pause audio narration"
-                  : isPaused
-                    ? "Resume audio narration"
-                    : "Play audio narration with Kokoro-82M"
+                  : "Play audio narration with Google Voice"
             }
           >
             {isLoading ? (
@@ -289,10 +311,10 @@ export function DispatchAudioPlayer({
                 <span className="font-medium text-amber-600 dark:text-amber-400">
                   {statusMessage}
                 </span>
-              ) : isUsingFallbackSpeech ? (
+              ) : useBrowserSpeech ? (
                 `Browser Speech • ~${listenMinutes} min listen`
               ) : (
-                `Kokoro-82M (${voice === "am_adam" ? "Adam" : "Heart"}) • ~${listenMinutes} min listen`
+                `Google Voice (${voice === "Puck" ? "Adam" : "Aoede"}) • ~${listenMinutes} min listen`
               )}
             </p>
           </div>
@@ -304,9 +326,9 @@ export function DispatchAudioPlayer({
             type="button"
             onClick={handleVoiceToggle}
             className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 transition"
-            title="Switch Voice (Kokoro-82M)"
+            title="Switch Voice (Google Voice Engine)"
           >
-            Voice: {voice === "am_adam" ? "Adam" : "Heart"}
+            Voice: {voice === "Puck" ? "Adam" : "Aoede"}
           </button>
 
           <span className="font-mono text-xs text-zinc-500">
@@ -325,10 +347,20 @@ export function DispatchAudioPlayer({
         </div>
       </div>
 
-      {/* Progress Bar */}
-      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+      {/* Scrubbable Progress Bar */}
+      <div
+        ref={progressBarRef}
+        onClick={handleSeek}
+        role="progressbar"
+        aria-valuenow={Math.round(progressPercent)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        tabIndex={0}
+        className="mt-3 h-2 w-full cursor-pointer overflow-hidden rounded-full bg-zinc-200 transition hover:h-2.5 dark:bg-zinc-800"
+        title="Click to seek"
+      >
         <div
-          className="h-full bg-zinc-900 transition-all duration-200 dark:bg-zinc-100"
+          className="h-full bg-zinc-900 transition-all duration-150 dark:bg-zinc-100"
           style={{ width: `${Math.min(100, Math.max(0, progressPercent))}%` }}
         />
       </div>

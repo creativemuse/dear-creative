@@ -7,10 +7,13 @@ import { stripHtmlTags } from "@/lib/posts/reading-time";
 export const maxDuration = 60;
 
 export async function GET(
-  _request: Request,
+  request: Request,
   props: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await props.params;
+  const url = new URL(request.url);
+  const voice = url.searchParams.get("voice") || "Puck";
+
   const post = await getPublishedPostBySlug(getDb(), slug);
 
   if (!post) {
@@ -24,6 +27,7 @@ export async function GET(
   try {
     const speech = await synthesizeSpeechWithGoogle({
       text: narration,
+      voiceName: voice,
     });
 
     return NextResponse.json({
@@ -31,6 +35,7 @@ export async function GET(
       audioBase64: speech.audioBase64,
       mimeType: speech.mimeType,
       provider: speech.provider,
+      voice,
     });
   } catch (error) {
     const message =
