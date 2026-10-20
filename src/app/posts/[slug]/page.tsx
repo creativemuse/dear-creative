@@ -3,6 +3,7 @@ import Script from "next/script";
 import { DispatchAudioPlayer } from "@/components/audio/dispatch-audio-player";
 import { OwnerEditPostButton } from "@/components/auth/owner-edit-controls";
 import { MicroTippingWidget } from "@/components/monetization/micro-tipping-widget";
+import { PredictionCard } from "@/components/predictions/prediction-card";
 import { PostFeedbackWidget } from "@/components/posts/post-feedback-widget";
 import { PostKeyTakeaways } from "@/components/posts/post-key-takeaways";
 import { splitArticleAtParagraph } from "@/lib/posts/post-takeaway-inline";
@@ -126,6 +127,9 @@ function PostArticle({ post }: { post: PublishedPostDetail }) {
 
       {/* Monetization: One-Click Base USDC Micro-Tipping Widget */}
       <MicroTippingWidget slug={post.slug} postTitle={post.title} />
+
+      {/* Oracle Verification: reality.eth Prediction Card */}
+      <PredictionCard slug={post.slug} />
 
       {/* Agent Feedback Loop: 2-Button Helpful/Skip Reader Sentiment */}
       <PostFeedbackWidget slug={post.slug} />

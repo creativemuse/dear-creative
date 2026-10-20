@@ -27,11 +27,13 @@
     "botid": "^1.5.11",
     "dotenv": "^18.0.8",
     "drizzle-orm": "^0.45.4",
+    "kokoro-js": "^1.2.1",
     "next": "16.4.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "resend": "^6.34.1",
     "sanitize-html": "^2.18.1",
+    "twitter-api-v2": "^1.29.1",
     "viem": "2.57.7"
   },
   "devDependencies": {

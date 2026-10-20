@@ -1,4 +1,5 @@
 import sanitizeHtml from "sanitize-html";
+import { resolveGroveOrIpfsUrl } from "@/lib/storage/lens-grove";
 import { decodeHtmlEntitiesOnce } from "./decode-html-entities-once";
 
 const ALLOWED_TAGS = [
@@ -36,6 +37,27 @@ const ALLOWED_TAGS = [
   "td",
   "span",
   "div",
+  "iframe",
+  "video",
+  "source",
+] as const;
+
+const TRUSTED_IFRAME_HOSTS = [
+  "youtube.com",
+  "www.youtube.com",
+  "youtube-nocookie.com",
+  "www.youtube-nocookie.com",
+  "youtu.be",
+  "tv.creativeplatform.xyz",
+  "creativeplatform.xyz",
+  "creative.tv",
+  "www.creative.tv",
+  "crtv.xyz",
+  "lvpr.tv",
+  "player.livepeer.com",
+  "livepeer.com",
+  "vimeo.com",
+  "player.vimeo.com",
 ] as const;
 
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -66,8 +88,24 @@ function isAllowedImgSrc(src: string): boolean {
   return (
     lower.startsWith("http://") ||
     lower.startsWith("https://") ||
-    lower.startsWith("/")
+    lower.startsWith("/") ||
+    lower.startsWith("ipfs://") ||
+    lower.startsWith("lens://")
   );
+}
+
+function isAllowedIframeSrc(src: string): boolean {
+  if (!src) return false;
+  try {
+    const url = new URL(src.trim());
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    const hostname = url.hostname.toLowerCase();
+    return TRUSTED_IFRAME_HOSTS.some(
+      (trusted) => hostname === trusted || hostname.endsWith(`.${trusted}`),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -79,15 +117,40 @@ export function sanitizeArticleHtml(raw: string): string {
     allowedTags: [...ALLOWED_TAGS],
     allowedAttributes: {
       a: ["href", "rel", "class", "target"],
-      img: ["src", "alt", "loading"],
+      img: ["src", "alt", "loading", "class", "width", "height"],
       blockquote: ["class", "data-dnt", "cite"],
       div: ["class"],
       span: ["class"],
       p: ["class"],
+      iframe: [
+        "src",
+        "title",
+        "width",
+        "height",
+        "allow",
+        "allowfullscreen",
+        "frameborder",
+        "loading",
+        "class",
+      ],
+      video: [
+        "src",
+        "controls",
+        "poster",
+        "preload",
+        "width",
+        "height",
+        "class",
+        "playsinline",
+      ],
+      source: ["src", "type"],
     },
+    allowedIframeHostnames: [...TRUSTED_IFRAME_HOSTS],
     allowedSchemes: ["http", "https", "mailto"],
     allowedSchemesByTag: {
-      img: ["http", "https"],
+      img: ["http", "https", "ipfs", "lens"],
+      video: ["http", "https", "ipfs", "lens"],
+      source: ["http", "https", "ipfs", "lens"],
     },
     allowProtocolRelative: false,
     exclusiveFilter(frame) {
@@ -96,6 +159,15 @@ export function sanitizeArticleHtml(raw: string): string {
       }
       if (frame.tag === "img") {
         return !isAllowedImgSrc(normalizeUrlAttribute(frame.attribs.src));
+      }
+      if (frame.tag === "iframe") {
+        return !isAllowedIframeSrc(normalizeUrlAttribute(frame.attribs.src));
+      }
+      if (frame.tag === "video") {
+        const src = normalizeUrlAttribute(frame.attribs.src);
+        if (src && !isAllowedImgSrc(src)) {
+          return true;
+        }
       }
       return false;
     },
@@ -172,12 +244,57 @@ export function sanitizeArticleHtml(raw: string): string {
       },
       img: (tagName, attribs) => {
         const src = normalizeUrlAttribute(attribs.src);
+        const resolvedSrc = resolveGroveOrIpfsUrl(src);
+        const rawClass = (attribs.class ?? "").trim();
+        const safeClass = rawClass
+          .split(/\s+/)
+          .filter((c) => /^[a-zA-Z0-9_-]+$/.test(c))
+          .join(" ");
+        return {
+          tagName,
+          attribs: {
+            src: resolvedSrc,
+            alt: attribs.alt ?? "",
+            loading: attribs.loading ?? "lazy",
+            ...(safeClass ? { class: safeClass } : {}),
+            ...(attribs.width ? { width: attribs.width } : {}),
+            ...(attribs.height ? { height: attribs.height } : {}),
+          },
+        };
+      },
+      iframe: (tagName, attribs) => {
+        const src = normalizeUrlAttribute(attribs.src);
+        const rawClass = (attribs.class ?? "").trim();
+        const safeClasses = new Set([
+          "dear-video-iframe",
+          ...rawClass.split(/\s+/).filter((c) => /^[a-zA-Z0-9_-]+$/.test(c)),
+        ]);
         return {
           tagName,
           attribs: {
             src,
-            alt: attribs.alt ?? "",
+            class: Array.from(safeClasses).join(" "),
+            title: attribs.title ?? "Video Player",
+            frameborder: "0",
+            allow:
+              attribs.allow ??
+              "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+            allowfullscreen: "",
             loading: "lazy",
+          },
+        };
+      },
+      video: (tagName, attribs) => {
+        const src = normalizeUrlAttribute(attribs.src);
+        const resolvedSrc = src ? resolveGroveOrIpfsUrl(src) : undefined;
+        return {
+          tagName,
+          attribs: {
+            ...(resolvedSrc ? { src: resolvedSrc } : {}),
+            controls: "",
+            preload: "metadata",
+            playsinline: "",
+            class: "dear-video-element",
           },
         };
       },

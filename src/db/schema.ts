@@ -505,5 +505,48 @@ export const adamChatMessages = sqliteTable(
 
 export type AdamChatMessageRecord = typeof adamChatMessages.$inferSelect;
 
+export const predictionStatusEnum = [
+  "pending",
+  "answered",
+  "finalized",
+  "invalid",
+] as const;
+export type PredictionStatus = (typeof predictionStatusEnum)[number];
+
+export const predictions = sqliteTable(
+  "predictions",
+  {
+    id: text("id").primaryKey(),
+    questionId: text("question_id").notNull(),
+    articleSlug: text("article_slug").notNull(),
+    questionText: text("question_text").notNull(),
+    bondToken: text("bond_token").default("ETH"),
+    minBondWei: text("min_bond_wei"),
+    txHash: text("tx_hash").notNull(),
+    status: text("status", { enum: predictionStatusEnum })
+      .notNull()
+      .default("pending"),
+    rawResult: text("raw_result"),
+    resolvedOutcome: text("resolved_outcome"),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    socialBroadcastAt: integer("social_broadcast_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    uniqueIndex("predictions_question_id_idx").on(table.questionId),
+    index("predictions_article_slug_idx").on(table.articleSlug),
+    index("predictions_status_idx").on(table.status),
+  ],
+);
+
+export type PredictionRecord = typeof predictions.$inferSelect;
+export type NewPredictionRecord = typeof predictions.$inferInsert;
+
+
 
 

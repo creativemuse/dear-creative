@@ -1,4 +1,10 @@
+import { resolveGroveOrIpfsUrl } from "@/lib/storage/lens-grove";
 import { sanitizeArticleHtml } from "./sanitize-article-html";
+import {
+  generateVideoEmbedHtml,
+  isSupportedVideoUrl,
+  parseVideoUrl,
+} from "./video-embed";
 
 function escapeHtml(text: string): string {
   return text
@@ -18,16 +24,30 @@ function formatInlineMarkdown(raw: string): string {
 
   working = escapeHtml(working);
 
-  // Images: ![alt](https://example.com/img.png)
+  // Images: ![alt](url) - supports https, http, relative /, ipfs://, lens://, data:image/
   working = working.replace(
-    /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
-    '<img src="$2" alt="$1" />',
+    /!\[([^\]]*)\]\(((?:https?:\/\/|\/|ipfs:\/\/|lens:\/\/|data:image\/)[^\s)]+)\)/g,
+    (_m, alt: string, src: string) => {
+      const resolvedSrc = resolveGroveOrIpfsUrl(src);
+      const isBanner = /^(?:banner|cover|header)\b/i.test(alt.trim());
+      const cls = isBanner ? ' class="dear-post-banner"' : "";
+      return `<img src="${resolvedSrc}" alt="${alt}"${cls} />`;
+    },
   );
 
   // Buttons: [button: label](url) or [btn: label](url)
   working = working.replace(
     /\[(?:button|btn):\s*([^\]]+)\]\(((?:https?:\/\/|mailto:|\/|#)[^\s)]+)\)/gi,
     '<a href="$2" class="dear-btn">$1</a>',
+  );
+
+  // Video embeds: [video: label](url) or [video](url) or [creative-tv](url) or [youtube](url)
+  working = working.replace(
+    /\[(?:video|creative-tv|youtube|crtv)(?::\s*([^\]]+))?\]\(((?:https?:\/\/|\/|ipfs:\/\/)[^\s)]+)\)/gi,
+    (_m, title: string | undefined, url: string) => {
+      const embed = generateVideoEmbedHtml(url, title);
+      return embed || `<a href="${url}">${title || url}</a>`;
+    },
   );
 
   // Share button: [share: label](url)
@@ -143,6 +163,32 @@ export function renderMarkdownToSafeHtml(markdown: string): string {
       continue;
     }
 
+    // Standalone Video Embed: Creative TV, Livepeer, YouTube, Vimeo, direct video
+    // Matches standalone video URL or [video: title](url) or [video](url)
+    const videoExplicitMatch =
+      /^\[(?:video|creative-tv|youtube|crtv)(?::\s*([^\]]+))?\]\(((?:https?:\/\/|\/|ipfs:\/\/)[^\s)]+)\)$/i.exec(
+        line.trim(),
+      );
+    if (videoExplicitMatch) {
+      const customTitle = videoExplicitMatch[1]?.trim();
+      const videoUrl = videoExplicitMatch[2]!.trim();
+      const videoHtml = generateVideoEmbedHtml(videoUrl, customTitle);
+      if (videoHtml) {
+        blocks.push(videoHtml);
+        i++;
+        continue;
+      }
+    }
+
+    if (isSupportedVideoUrl(cleanLine)) {
+      const videoHtml = generateVideoEmbedHtml(cleanLine);
+      if (videoHtml) {
+        blocks.push(videoHtml);
+        i++;
+        continue;
+      }
+    }
+
     // Headings (#, ##, ###, ####+) -> mapped to h2, h3, h4 allowed by sanitizeArticleHtml
     const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line.trim());
     if (headingMatch) {
@@ -230,6 +276,16 @@ export function cleanArchiveBodyArtifacts(raw: string): string {
       /<p>\s*<a\s+[^>]*href="(https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([a-zA-Z0-9_]+)\/status\/(\d+)[^"]*)"[^>]*>.*?<\/a>\s*<\/p>/gi,
       (_m, url: string, user: string) => {
         return `<blockquote class="twitter-tweet dear-x-card" data-dnt="true"><div class="dear-x-card-header"><span class="dear-x-card-logo">𝕏</span><span class="dear-x-card-author">@${user}</span></div><p class="dear-x-card-body"><a href="${url}" target="_blank" rel="noopener noreferrer nofollow" class="dear-x-link">View post on 𝕏 (@${user}) ↗</a></p></blockquote>`;
+      },
+    )
+    .replace(
+      /<p>\s*<a\s+[^>]*href="(https?:\/\/[^"]+)"[^>]*>(?:https?:\/\/[^<]+)?<\/a>\s*<\/p>/gi,
+      (match, url: string) => {
+        if (isSupportedVideoUrl(url)) {
+          const videoHtml = generateVideoEmbedHtml(url);
+          return videoHtml || match;
+        }
+        return match;
       },
     );
 }

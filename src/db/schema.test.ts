@@ -8,6 +8,8 @@ import {
   payMethodEnum,
   postSourceEnum,
   postStatusEnum,
+  predictions,
+  predictionStatusEnum,
 } from "./schema";
 
 describe("schema enums", () => {
@@ -37,5 +39,16 @@ describe("schema enums", () => {
     expect(adamChatThreads).toBeDefined();
     expect(adamChatMessages).toBeDefined();
   });
+
+  it("defines predictions table and status enum", () => {
+    expect(predictionStatusEnum).toEqual([
+      "pending",
+      "answered",
+      "finalized",
+      "invalid",
+    ]);
+    expect(predictions).toBeDefined();
+  });
 });
+
 

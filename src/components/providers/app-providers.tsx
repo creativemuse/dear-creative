@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { PrivyBridgeContext, PrivyRootProvider } from "./privy-root-provider";
+import { ToastProvider } from "@/components/ui/toast";
 
 export const STUDIO_TOKEN_STORAGE_KEY = "dear_creative_studio_token";
 
@@ -155,14 +156,17 @@ export function AppProviders({ privyAppId, children }: AppProvidersProps) {
   if (!resolvedAppId) {
     return (
       <AuthRuntimeConfigContext.Provider value={contextValue}>
-        {children}
+        <ToastProvider>{children}</ToastProvider>
       </AuthRuntimeConfigContext.Provider>
     );
   }
 
   return (
     <AuthRuntimeConfigContext.Provider value={contextValue}>
-      <PrivyRootProvider appId={resolvedAppId}>{children}</PrivyRootProvider>
+      <PrivyRootProvider appId={resolvedAppId}>
+        <ToastProvider>{children}</ToastProvider>
+      </PrivyRootProvider>
     </AuthRuntimeConfigContext.Provider>
   );
 }
+
