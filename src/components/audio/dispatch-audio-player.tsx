@@ -1,9 +1,79 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { stripHtmlTags } from "@/lib/posts/reading-time";
 
 export type GoogleVoice = "Puck" | "Aoede";
+
+export type DispatchAudioResources = {
+  audio: Pick<
+    HTMLAudioElement,
+    | "pause"
+    | "onloadedmetadata"
+    | "ontimeupdate"
+    | "onended"
+    | "onerror"
+  > & {
+    removeAttribute?: (qualifiedName: string) => void;
+    load?: () => void;
+  } | null;
+  utterance: Pick<SpeechSynthesisUtterance, "onend" | "onerror"> | null;
+  abortController: Pick<AbortController, "abort"> | null;
+  speechSynthesis?: Pick<SpeechSynthesis, "cancel"> | null;
+};
+
+/**
+ * Safely tears down active HTMLAudioElement, Web Speech synthesis, and in-flight
+ * TTS fetch requests without triggering spurious `audio.onerror` fallbacks.
+ */
+export function stopDispatchAudioResources(
+  resources: DispatchAudioResources,
+): void {
+  if (resources.abortController) {
+    try {
+      resources.abortController.abort();
+    } catch {
+      // Ignore abort errors
+    }
+  }
+
+  if (resources.audio) {
+    const audio = resources.audio;
+    // Detach listeners BEFORE pausing or clearing src so resetting the media
+    // element does not fire `audio.onerror` and trigger the Web Speech fallback.
+    audio.onloadedmetadata = null;
+    audio.ontimeupdate = null;
+    audio.onended = null;
+    audio.onerror = null;
+    try {
+      audio.pause();
+      audio.removeAttribute?.("src");
+      audio.load?.();
+    } catch {
+      // Ignore errors during media teardown
+    }
+  }
+
+  if (resources.utterance) {
+    resources.utterance.onend = null;
+    resources.utterance.onerror = null;
+  }
+
+  const synth =
+    resources.speechSynthesis !== undefined
+      ? resources.speechSynthesis
+      : typeof window !== "undefined" && "speechSynthesis" in window
+        ? window.speechSynthesis
+        : null;
+
+  if (synth) {
+    try {
+      synth.cancel();
+    } catch {
+      // Ignore errors if speechSynthesis is unavailable
+    }
+  }
+}
 
 type DispatchAudioPlayerProps = {
   slug: string;
@@ -33,26 +103,87 @@ export function DispatchAudioPlayer({
   const audioCacheRef = useRef<Record<string, string>>({});
   const currentVoiceRef = useRef<GoogleVoice>("Puck");
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isActiveRef = useRef(true);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
 
   const plainText = `${title}. ${excerpt ? excerpt + ". " : ""}${stripHtmlTags(bodyHtml ?? "")}`;
 
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = "";
+  const stopAllPlayback = useCallback(() => {
+    stopDispatchAudioResources({
+      audio: audioRef.current,
+      utterance: utteranceRef.current,
+      abortController: abortControllerRef.current,
+    });
+    audioRef.current = null;
+    utteranceRef.current = null;
+    abortControllerRef.current = null;
+    setIsPlaying(false);
+    setIsLoading(false);
+    setStatusMessage(null);
+    setCurrentTime(0);
+  }, []);
+
+  // Stop playback when navigating away (including Next.js Activity hide, link clicks, popstate, and page unload)
+  useLayoutEffect(() => {
+    isActiveRef.current = true;
+
+    const handlePageLeave = () => {
+      isActiveRef.current = false;
+      stopAllPlayback();
+    };
+
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
       }
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
+      const target = event.target as HTMLElement | null;
+      const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      if (anchor.target && anchor.target !== "_self") return;
+      if (anchor.hasAttribute("download")) return;
+
+      try {
+        const destUrl = new URL(anchor.href, window.location.href);
+        if (
+          destUrl.origin === window.location.origin &&
+          destUrl.pathname !== window.location.pathname
+        ) {
+          isActiveRef.current = false;
+          stopAllPlayback();
+        }
+      } catch {
+        // Ignore malformed URLs
       }
     };
-  }, []);
+
+    window.addEventListener("pagehide", handlePageLeave);
+    window.addEventListener("beforeunload", handlePageLeave);
+    window.addEventListener("popstate", handlePageLeave);
+    document.addEventListener("click", handleDocumentClick, true);
+
+    return () => {
+      isActiveRef.current = false;
+      window.removeEventListener("pagehide", handlePageLeave);
+      window.removeEventListener("beforeunload", handlePageLeave);
+      window.removeEventListener("popstate", handlePageLeave);
+      document.removeEventListener("click", handleDocumentClick, true);
+      stopAllPlayback();
+    };
+  }, [slug, stopAllPlayback]);
 
   // Fallback to native Web Speech API with pitch/voice differentiation
   const fallbackToBrowserSpeech = useCallback(
     (voiceToUse: GoogleVoice = voice) => {
+      if (!isActiveRef.current) return;
+
       setUseBrowserSpeech(true);
       setStatusMessage(null);
       setIsLoading(false);
@@ -97,6 +228,9 @@ export function DispatchAudioPlayer({
           setIsPlaying(false);
           setCurrentTime(0);
         };
+        utterance.onerror = () => {
+          setIsPlaying(false);
+        };
         utteranceRef.current = utterance;
         window.speechSynthesis.speak(utterance);
         setIsPlaying(true);
@@ -126,6 +260,7 @@ export function DispatchAudioPlayer({
       };
 
       audio.onerror = () => {
+        if (!isActiveRef.current) return;
         console.warn("Audio playback error, switching to Web Speech fallback");
         fallbackToBrowserSpeech(currentVoiceRef.current);
       };
@@ -136,6 +271,7 @@ export function DispatchAudioPlayer({
   // Play target voice (from cache or Google Voice Engine)
   const playVoice = useCallback(
     async (targetVoice: GoogleVoice, startOffsetSec = 0) => {
+      if (!isActiveRef.current) return;
       currentVoiceRef.current = targetVoice;
 
       // 1. Check in-memory audio cache for target voice
@@ -144,6 +280,7 @@ export function DispatchAudioPlayer({
         if (!audioRef.current) {
           audioRef.current = new Audio(cachedSrc);
         } else {
+          audioRef.current.onerror = null;
           audioRef.current.src = cachedSrc;
         }
         setupAudioElement(audioRef.current);
@@ -155,9 +292,14 @@ export function DispatchAudioPlayer({
         }
         try {
           await audioRef.current.play();
+          if (!isActiveRef.current) {
+            stopAllPlayback();
+            return;
+          }
           setIsPlaying(true);
           setStatusMessage(null);
         } catch (err) {
+          if (!isActiveRef.current) return;
           console.warn("Cached audio playback failed:", err);
           fallbackToBrowserSpeech(targetVoice);
         }
@@ -165,6 +307,12 @@ export function DispatchAudioPlayer({
       }
 
       // 2. Fetch synthesized narration from Google Voice Engine
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       setIsLoading(true);
       setStatusMessage(
         `Synthesizing narration with ${targetVoice === "Puck" ? "Adam (Puck)" : "Aoede"}...`,
@@ -173,7 +321,12 @@ export function DispatchAudioPlayer({
       try {
         const res = await fetch(
           `/api/posts/${encodeURIComponent(slug)}/audio?voice=${encodeURIComponent(targetVoice)}`,
+          { signal: controller.signal },
         );
+
+        if (!isActiveRef.current || controller.signal.aborted) {
+          return;
+        }
 
         if (!res.ok) {
           throw new Error(`Audio route returned HTTP ${res.status}`);
@@ -187,15 +340,20 @@ export function DispatchAudioPlayer({
           error?: string;
         };
 
+        if (!isActiveRef.current || controller.signal.aborted) {
+          return;
+        }
+
         if (data.audioBase64) {
           const audioSrc = `data:${data.mimeType || "audio/mp3"};base64,${data.audioBase64}`;
           audioCacheRef.current[targetVoice] = audioSrc;
 
           // Only proceed if user hasn't switched away while fetching
-          if (currentVoiceRef.current === targetVoice) {
+          if (currentVoiceRef.current === targetVoice && isActiveRef.current) {
             if (!audioRef.current) {
               audioRef.current = new Audio(audioSrc);
             } else {
+              audioRef.current.onerror = null;
               audioRef.current.src = audioSrc;
             }
 
@@ -207,6 +365,10 @@ export function DispatchAudioPlayer({
               audioRef.current.currentTime = 0;
             }
             await audioRef.current.play();
+            if (!isActiveRef.current || controller.signal.aborted) {
+              stopAllPlayback();
+              return;
+            }
             setIsPlaying(true);
             setStatusMessage(null);
           }
@@ -214,17 +376,24 @@ export function DispatchAudioPlayer({
           fallbackToBrowserSpeech(targetVoice);
         }
       } catch (err) {
+        if (!isActiveRef.current || controller.signal.aborted) {
+          return;
+        }
         console.warn("Google Voice synthesis unavailable, falling back to Web Speech:", err);
         fallbackToBrowserSpeech(targetVoice);
       } finally {
-        setIsLoading(false);
+        if (isActiveRef.current && !controller.signal.aborted) {
+          setIsLoading(false);
+        }
       }
     },
-    [slug, playbackRate, fallbackToBrowserSpeech, setupAudioElement],
+    [slug, playbackRate, fallbackToBrowserSpeech, setupAudioElement, stopAllPlayback],
   );
 
   // Toggle play/pause
   const handleTogglePlay = useCallback(async () => {
+    isActiveRef.current = true;
+
     // 1. If currently playing, pause
     if (isPlaying) {
       if (useBrowserSpeech) {
