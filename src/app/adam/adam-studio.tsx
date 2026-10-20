@@ -400,6 +400,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     null,
   );
   const selectedEditPostIdRef = useRef<string | null>(null);
+  const selectedEditPostSlugRef = useRef<string | null>(null);
   const requestedSlugRef = useRef<string | null>(
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("slug")?.trim() || null
@@ -455,6 +456,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
 
   const selectPostForEditing = useCallback((post: AdminPostRecord) => {
     selectedEditPostIdRef.current = post.id;
+    selectedEditPostSlugRef.current = post.slug;
     setSelectedEditPostId(post.id);
     setEditPostTitle(post.title);
     setEditPostSlug(post.slug);
@@ -550,7 +552,12 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
       if (postsRes.ok) {
         const data = (await postsRes.json()) as { posts: AdminPostRecord[] };
         let loadedPosts = data.posts ?? [];
-        const targetSlug = requestedSlugRef.current;
+        const urlSlug =
+          typeof window !== "undefined"
+            ? new URLSearchParams(window.location.search).get("slug")?.trim() ||
+              null
+            : null;
+        const targetSlug = requestedSlugRef.current || urlSlug;
         if (targetSlug) {
           let match = loadedPosts.find(
             (p) => p.slug === targetSlug || p.id === targetSlug,
@@ -656,6 +663,7 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
   // Sync tab & slug from URL (e.g. from OwnerEditPostButton or browser navigation)
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const hasSession = (ready && authenticated) || Boolean(studioToken.trim());
     const syncFromUrl = async () => {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get("tab");
@@ -665,13 +673,17 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
         setActiveTab("posts");
       }
 
-      if (slugParam && slugParam !== selectedEditPostIdRef.current) {
+      if (
+        slugParam &&
+        slugParam !== selectedEditPostIdRef.current &&
+        slugParam !== selectedEditPostSlugRef.current
+      ) {
         const match = adminPosts.find(
           (p) => p.slug === slugParam || p.id === slugParam,
         );
         if (match) {
           selectPostForEditing(match);
-        } else {
+        } else if (hasSession) {
           try {
             const res = await authFetch(
               `/api/adam/posts?slug=${encodeURIComponent(slugParam)}`,
@@ -696,7 +708,14 @@ export function AdamStudio({ initialTab = "chat" }: { initialTab?: StudioTab }) 
     void syncFromUrl();
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, [adminPosts, authFetch, selectPostForEditing]);
+  }, [
+    adminPosts,
+    authFetch,
+    authenticated,
+    ready,
+    selectPostForEditing,
+    studioToken,
+  ]);
 
   const handleSaveStudioToken = useCallback(
     (e: FormEvent) => {

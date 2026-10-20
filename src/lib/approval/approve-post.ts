@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { corePostColumns, ensurePostsSchema } from "@/db/ensure-schema";
 import { approvals, posts } from "@/db/schema";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { contentHashForPost } from "./snapshot-from-post";
@@ -28,8 +29,9 @@ export async function approvePost(
     return "not_pending";
   }
 
+  await ensurePostsSchema(db);
   const postRows = await db
-    .select()
+    .select(corePostColumns)
     .from(posts)
     .where(eq(posts.id, postId))
     .limit(1);

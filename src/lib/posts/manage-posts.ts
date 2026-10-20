@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { desc, eq, or } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import {
+  corePostColumns,
+  ensurePostsSchema,
+  type CorePostRow,
+} from "@/db/ensure-schema";
 import { approvals, posts, type PostStatus } from "@/db/schema";
 import { DuplicateSlugError } from "@/lib/adam/publish-draft";
 import { computeApprovalContentHash } from "@/lib/approval/content-hash";
@@ -39,7 +44,7 @@ export type UpdateAdminPostInput = {
   syncEmailWithBody?: boolean;
 };
 
-function toAdminPostRecord(row: typeof posts.$inferSelect): AdminPostRecord {
+function toAdminPostRecord(row: CorePostRow): AdminPostRecord {
   const effectiveBody = row.bodyHtml ?? row.emailHtml ?? "";
   const sanitizedBody = effectiveBody ? ensureArticleHtml(effectiveBody) : null;
   return {
@@ -65,16 +70,17 @@ export async function listAdminPosts(
   db: DearCreativeDb,
   options?: { status?: PostStatus; limit?: number },
 ): Promise<AdminPostRecord[]> {
+  await ensurePostsSchema(db);
   const limit = Math.min(Math.max(options?.limit ?? 100, 1), 250);
   const rows = options?.status
     ? await db
-        .select()
+        .select(corePostColumns)
         .from(posts)
         .where(eq(posts.status, options.status))
         .orderBy(desc(posts.publishedAt), desc(posts.updatedAt))
         .limit(limit)
     : await db
-        .select()
+        .select(corePostColumns)
         .from(posts)
         .orderBy(desc(posts.publishedAt), desc(posts.updatedAt))
         .limit(limit);
@@ -90,8 +96,9 @@ export async function getAdminPostByIdOrSlug(
   if (!trimmed) {
     return null;
   }
+  await ensurePostsSchema(db);
   const [row] = await db
-    .select()
+    .select(corePostColumns)
     .from(posts)
     .where(or(eq(posts.id, trimmed), eq(posts.slug, trimmed)))
     .limit(1);
@@ -133,8 +140,9 @@ export async function updateAdminPost(
   actor = "admin",
 ): Promise<{ post: AdminPostRecord; previousSlug: string } | null> {
   const trimmedKey = postIdOrSlug.trim();
+  await ensurePostsSchema(db);
   const [existing] = await db
-    .select()
+    .select(corePostColumns)
     .from(posts)
     .where(or(eq(posts.id, trimmedKey), eq(posts.slug, trimmedKey)))
     .limit(1);
@@ -197,7 +205,7 @@ export async function updateAdminPost(
     });
 
     const [created] = await db
-      .select()
+      .select(corePostColumns)
       .from(posts)
       .where(eq(posts.id, newId))
       .limit(1);
