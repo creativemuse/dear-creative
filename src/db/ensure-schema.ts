@@ -79,6 +79,61 @@ const IDEMPOTENT_TABLE_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS predictions_question_id_idx ON predictions (question_id)`,
   `CREATE INDEX IF NOT EXISTS predictions_article_slug_idx ON predictions (article_slug)`,
   `CREATE INDEX IF NOT EXISTS predictions_status_idx ON predictions (status)`,
+  `CREATE TABLE IF NOT EXISTS adam_chat_threads (
+    id text PRIMARY KEY NOT NULL,
+    title text DEFAULT 'New Conversation' NOT NULL,
+    summary text,
+    is_archived integer DEFAULT 0 NOT NULL,
+    created_at integer DEFAULT (unixepoch() * 1000) NOT NULL,
+    updated_at integer DEFAULT (unixepoch() * 1000) NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS adam_chat_threads_updated_at_idx ON adam_chat_threads (updated_at)`,
+  `CREATE INDEX IF NOT EXISTS adam_chat_threads_is_archived_idx ON adam_chat_threads (is_archived)`,
+  `CREATE TABLE IF NOT EXISTS adam_chat_messages (
+    id text PRIMARY KEY NOT NULL,
+    thread_id text NOT NULL,
+    role text NOT NULL,
+    content text NOT NULL,
+    attachments_json text,
+    created_draft_post_id text,
+    created_approval_id text,
+    created_at integer DEFAULT (unixepoch() * 1000) NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS adam_chat_messages_thread_id_idx ON adam_chat_messages (thread_id)`,
+  `CREATE INDEX IF NOT EXISTS adam_chat_messages_created_at_idx ON adam_chat_messages (created_at)`,
+  `CREATE TABLE IF NOT EXISTS adam_ideas (
+    id text PRIMARY KEY NOT NULL,
+    title text NOT NULL,
+    raw_content text NOT NULL,
+    attachments_json text,
+    status text DEFAULT 'queued' NOT NULL,
+    draft_post_id text,
+    created_by text,
+    created_at integer DEFAULT (unixepoch() * 1000) NOT NULL,
+    updated_at integer DEFAULT (unixepoch() * 1000) NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS adam_ideas_status_created_idx ON adam_ideas (status, created_at)`,
+  `CREATE TABLE IF NOT EXISTS adam_schedules (
+    id text PRIMARY KEY NOT NULL,
+    enabled integer DEFAULT 1 NOT NULL,
+    cron_expression text DEFAULT '0 9 * * 1' NOT NULL,
+    timezone text DEFAULT 'America/New_York' NOT NULL,
+    instructions text,
+    last_run_at integer,
+    last_run_status text DEFAULT 'idle' NOT NULL,
+    last_run_message text,
+    last_draft_post_id text,
+    updated_at integer DEFAULT (unixepoch() * 1000) NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS post_feedback (
+    id text PRIMARY KEY NOT NULL,
+    slug text NOT NULL,
+    sentiment text NOT NULL,
+    voter_hash text,
+    created_at integer DEFAULT (unixepoch() * 1000) NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS post_feedback_slug_idx ON post_feedback (slug)`,
+  `CREATE INDEX IF NOT EXISTS post_feedback_created_at_idx ON post_feedback (created_at)`,
 ];
 
 const ADDITIVE_POST_COLUMNS: Array<{ name: string; ddl: string }> = [
@@ -114,6 +169,16 @@ const ADDITIVE_POST_COLUMNS: Array<{ name: string; ddl: string }> = [
 
 async function runEnsurePostsSchema(db: DearCreativeDb): Promise<void> {
   try {
+    // 1. Ensure all additive extension tables and indexes exist
+    for (const stmt of IDEMPOTENT_TABLE_STATEMENTS) {
+      try {
+        await db.run(sql.raw(stmt));
+      } catch {
+        // Ignore if table/index already exists or connection is read-only
+      }
+    }
+
+    // 2. Ensure additive posts columns exist
     const infoRows = await db.all<{ name?: string }>(
       sql.raw("PRAGMA table_info('posts')"),
     );
@@ -132,21 +197,11 @@ async function runEnsurePostsSchema(db: DearCreativeDb): Promise<void> {
       (col) => !existingCols.has(col.name),
     );
 
-    if (missingCols.length > 0) {
-      for (const stmt of IDEMPOTENT_TABLE_STATEMENTS) {
-        try {
-          await db.run(sql.raw(stmt));
-        } catch {
-          // Ignore if table/index already exists or connection is read-only
-        }
-      }
-
-      for (const col of missingCols) {
-        try {
-          await db.run(sql.raw(col.ddl));
-        } catch {
-          // Ignore if column was added concurrently or connection is read-only
-        }
+    for (const col of missingCols) {
+      try {
+        await db.run(sql.raw(col.ddl));
+      } catch {
+        // Ignore if column was added concurrently or connection is read-only
       }
     }
   } catch {
@@ -162,6 +217,9 @@ export function ensurePostsSchema(db: DearCreativeDb): Promise<void> {
   }
   return pending;
 }
+
+export const ensureAdamStudioSchema = ensurePostsSchema;
+export const ensureChatSchema = ensurePostsSchema;
 
 export async function getPostAudioColumns(
   db: DearCreativeDb,

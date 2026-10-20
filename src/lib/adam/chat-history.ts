@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { ensureAdamStudioSchema } from "@/db/ensure-schema";
 import {
   adamChatMessages,
   adamChatThreads,
@@ -37,87 +38,118 @@ export async function createChatThread(
   db: DearCreativeDb,
   input: { title?: string; summary?: string } = {},
 ): Promise<AdamChatThreadRecord> {
+  await ensureAdamStudioSchema(db);
   const id = `thread_${crypto.randomUUID()}`;
   const now = Date.now();
   const title = input.title?.trim() || "New Conversation";
 
-  const [created] = await db
-    .insert(adamChatThreads)
-    .values({
+  try {
+    const [created] = await db
+      .insert(adamChatThreads)
+      .values({
+        id,
+        title,
+        summary: input.summary ?? null,
+        isArchived: false,
+        createdAt: new Date(now),
+        updatedAt: new Date(now),
+      })
+      .returning();
+
+    return created!;
+  } catch (err) {
+    console.warn("createChatThread DB fallback:", err);
+    return {
       id,
       title,
       summary: input.summary ?? null,
       isArchived: false,
       createdAt: new Date(now),
       updatedAt: new Date(now),
-    })
-    .returning();
-
-  return created!;
+    };
+  }
 }
 
 export async function listChatThreads(
   db: DearCreativeDb,
   options: { limit?: number; includeArchived?: boolean } = {},
 ): Promise<AdamChatThreadRecord[]> {
+  await ensureAdamStudioSchema(db);
   const limit = options.limit ?? 50;
 
-  const query = db
-    .select()
-    .from(adamChatThreads)
-    .orderBy(desc(adamChatThreads.updatedAt))
-    .limit(limit);
+  try {
+    const query = db
+      .select()
+      .from(adamChatThreads)
+      .orderBy(desc(adamChatThreads.updatedAt))
+      .limit(limit);
 
-  if (!options.includeArchived) {
-    return query.where(eq(adamChatThreads.isArchived, false));
+    if (!options.includeArchived) {
+      return await query.where(eq(adamChatThreads.isArchived, false));
+    }
+
+    return await query;
+  } catch (err) {
+    console.warn("listChatThreads DB fallback:", err);
+    return [];
   }
-
-  return query;
 }
 
 export async function getChatThread(
   db: DearCreativeDb,
   threadId: string,
 ): Promise<AdamChatThreadRecord | null> {
-  const [thread] = await db
-    .select()
-    .from(adamChatThreads)
-    .where(eq(adamChatThreads.id, threadId))
-    .limit(1);
+  await ensureAdamStudioSchema(db);
+  try {
+    const [thread] = await db
+      .select()
+      .from(adamChatThreads)
+      .where(eq(adamChatThreads.id, threadId))
+      .limit(1);
 
-  return thread ?? null;
+    return thread ?? null;
+  } catch (err) {
+    console.warn("getChatThread DB fallback:", err);
+    return null;
+  }
 }
 
 export async function getThreadMessages(
   db: DearCreativeDb,
   threadId: string,
 ): Promise<StoredChatMessage[]> {
-  const rows = await db
-    .select()
-    .from(adamChatMessages)
-    .where(eq(adamChatMessages.threadId, threadId))
-    .orderBy(adamChatMessages.createdAt);
+  await ensureAdamStudioSchema(db);
+  try {
+    const rows = await db
+      .select()
+      .from(adamChatMessages)
+      .where(eq(adamChatMessages.threadId, threadId))
+      .orderBy(adamChatMessages.createdAt);
 
-  return rows.map((r) => {
-    let attachments: StudioAttachmentInput[] | undefined;
-    if (r.attachmentsJson) {
-      try {
-        attachments = JSON.parse(r.attachmentsJson) as StudioAttachmentInput[];
-      } catch {
-        attachments = undefined;
+    return rows.map((r) => {
+      let attachments: StudioAttachmentInput[] | undefined;
+      if (r.attachmentsJson) {
+        try {
+          attachments = JSON.parse(r.attachmentsJson) as StudioAttachmentInput[];
+        } catch {
+          attachments = undefined;
+        }
       }
-    }
-    return {
-      id: r.id,
-      threadId: r.threadId,
-      role: r.role,
-      content: r.content,
-      attachments,
-      createdDraftPostId: r.createdDraftPostId,
-      createdApprovalId: r.createdApprovalId,
-      createdAt: r.createdAt.getTime(),
-    };
-  });
+      return {
+        id: r.id,
+        threadId: r.threadId,
+        role: r.role,
+        content: r.content,
+        attachments,
+        createdDraftPostId: r.createdDraftPostId,
+        createdApprovalId: r.createdApprovalId,
+        createdAt: r.createdAt.getTime(),
+      };
+    });
+  } catch (err) {
+    console.warn("getThreadMessages DB fallback:", err);
+    return [];
+  }
 }
 
 export async function getChatThreadWithMessages(
@@ -144,6 +176,7 @@ export async function addChatMessage(
     createdApprovalId?: string | null;
   },
 ): Promise<StoredChatMessage> {
+  await ensureAdamStudioSchema(db);
   const id = `msg_${crypto.randomUUID()}`;
   const now = Date.now();
   const attachmentsJson =
@@ -151,46 +184,64 @@ export async function addChatMessage(
       ? JSON.stringify(input.attachments)
       : null;
 
-  // Insert message
-  const [created] = await db
-    .insert(adamChatMessages)
-    .values({
+  try {
+    // Insert message
+    const [created] = await db
+      .insert(adamChatMessages)
+      .values({
+        id,
+        threadId: input.threadId,
+        role: input.role,
+        content: input.content,
+        attachmentsJson,
+        createdDraftPostId: input.createdDraftPostId ?? null,
+        createdApprovalId: input.createdApprovalId ?? null,
+        createdAt: new Date(now),
+      })
+      .returning();
+
+    // Touch thread's updatedAt and update title if still default and role is user
+    try {
+      const thread = await getChatThread(db, input.threadId);
+      if (thread) {
+        const updates: Partial<typeof adamChatThreads.$inferInsert> = {
+          updatedAt: new Date(now),
+        };
+        if (thread.title === "New Conversation" && input.role === "user") {
+          updates.title = autoGenerateThreadTitle(input.content);
+        }
+        await db
+          .update(adamChatThreads)
+          .set(updates)
+          .where(eq(adamChatThreads.id, input.threadId));
+      }
+    } catch {
+      // Non-fatal title update
+    }
+
+    return {
+      id: created?.id ?? id,
+      threadId: created?.threadId ?? input.threadId,
+      role: created?.role ?? input.role,
+      content: created?.content ?? input.content,
+      attachments: input.attachments,
+      createdDraftPostId: created?.createdDraftPostId ?? input.createdDraftPostId,
+      createdApprovalId: created?.createdApprovalId ?? input.createdApprovalId,
+      createdAt: created?.createdAt ? created.createdAt.getTime() : now,
+    };
+  } catch (err) {
+    console.warn("addChatMessage DB fallback:", err);
+    return {
       id,
       threadId: input.threadId,
       role: input.role,
       content: input.content,
-      attachmentsJson,
+      attachments: input.attachments,
       createdDraftPostId: input.createdDraftPostId ?? null,
       createdApprovalId: input.createdApprovalId ?? null,
-      createdAt: new Date(now),
-    })
-    .returning();
-
-  // Touch thread's updatedAt and update title if still default and role is user
-  const thread = await getChatThread(db, input.threadId);
-  if (thread) {
-    const updates: Partial<typeof adamChatThreads.$inferInsert> = {
-      updatedAt: new Date(now),
+      createdAt: now,
     };
-    if (thread.title === "New Conversation" && input.role === "user") {
-      updates.title = autoGenerateThreadTitle(input.content);
-    }
-    await db
-      .update(adamChatThreads)
-      .set(updates)
-      .where(eq(adamChatThreads.id, input.threadId));
   }
-
-  return {
-    id: created!.id,
-    threadId: created!.threadId,
-    role: created!.role,
-    content: created!.content,
-    attachments: input.attachments,
-    createdDraftPostId: created!.createdDraftPostId,
-    createdApprovalId: created!.createdApprovalId,
-    createdAt: created!.createdAt.getTime(),
-  };
 }
 
 export async function updateChatThread(
@@ -198,6 +249,7 @@ export async function updateChatThread(
   threadId: string,
   updates: { title?: string; isArchived?: boolean; summary?: string },
 ): Promise<AdamChatThreadRecord | null> {
+  await ensureAdamStudioSchema(db);
   const now = Date.now();
   const values: Partial<typeof adamChatThreads.$inferInsert> = {
     updatedAt: new Date(now),
@@ -212,23 +264,34 @@ export async function updateChatThread(
     values.summary = updates.summary;
   }
 
-  const [updated] = await db
-    .update(adamChatThreads)
-    .set(values)
-    .where(eq(adamChatThreads.id, threadId))
-    .returning();
+  try {
+    const [updated] = await db
+      .update(adamChatThreads)
+      .set(values)
+      .where(eq(adamChatThreads.id, threadId))
+      .returning();
 
-  return updated ?? null;
+    return updated ?? null;
+  } catch (err) {
+    console.warn("updateChatThread DB fallback:", err);
+    return null;
+  }
 }
 
 export async function deleteChatThread(
   db: DearCreativeDb,
   threadId: string,
 ): Promise<boolean> {
-  const result = await db
-    .delete(adamChatThreads)
-    .where(eq(adamChatThreads.id, threadId))
-    .returning({ id: adamChatThreads.id });
+  await ensureAdamStudioSchema(db);
+  try {
+    const result = await db
+      .delete(adamChatThreads)
+      .where(eq(adamChatThreads.id, threadId))
+      .returning({ id: adamChatThreads.id });
 
-  return result.length > 0;
+    return result.length > 0;
+  } catch (err) {
+    console.warn("deleteChatThread DB fallback:", err);
+    return false;
+  }
 }
