@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import type { DearCreativeDb } from "@/db/client";
 import { corePostColumns, ensurePostsSchema } from "@/db/ensure-schema";
-import { approvals, posts } from "@/db/schema";
+import { approvals, auditEvents, posts } from "@/db/schema";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { contentHashForPost } from "./snapshot-from-post";
 
@@ -76,6 +77,21 @@ export async function approvePost(
     entityType: "post",
     entityId: postId,
     payload: { contentHash: currentHash },
+  });
+
+  // Emit post.published event for external consumers
+  await db.insert(auditEvents).values({
+    id: randomUUID(),
+    actor: approvedBy,
+    action: "post.published",
+    entityType: "post",
+    entityId: postId,
+    payloadJson: JSON.stringify({
+      postId,
+      slug: post.slug,
+      title: post.title,
+      publishedAt: post.publishedAt ?? now,
+    }),
   });
 
   return "approved";

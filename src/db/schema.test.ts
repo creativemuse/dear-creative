@@ -33,7 +33,14 @@ describe("schema enums", () => {
 
   it("includes approval and delivery channels", () => {
     expect(approvalStatusEnum).toContain("approved");
-    expect(deliveryChannelEnum).toEqual(["publish", "x", "email"]);
+    expect(deliveryChannelEnum).toEqual([
+      "publish",
+      "x",
+      "email",
+      "farcaster",
+      "discord",
+      "orb",
+    ]);
   });
 
   it("defines Adam chat threads and messages tables", () => {
