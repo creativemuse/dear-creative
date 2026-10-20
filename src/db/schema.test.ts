@@ -3,10 +3,12 @@ import {
   adamChatMessages,
   adamChatThreads,
   approvalStatusEnum,
+  authors,
   chatRoleEnum,
   deliveryChannelEnum,
   payMethodEnum,
   postSourceEnum,
+  posts,
   postStatusEnum,
   predictions,
   predictionStatusEnum,
@@ -48,6 +50,15 @@ describe("schema enums", () => {
       "invalid",
     ]);
     expect(predictions).toBeDefined();
+  });
+
+  it("defines authors table and post paywall fields", () => {
+    expect(authors).toBeDefined();
+    expect(posts.authorId).toBeDefined();
+    expect(posts.freeContent).toBeDefined();
+    expect(posts.gatedContent).toBeDefined();
+    expect(posts.isGated).toBeDefined();
+    expect(posts.gatePriceUsdc).toBeDefined();
   });
 });
 

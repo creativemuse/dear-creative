@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   index,
   integer,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -77,18 +78,46 @@ export const sponsors = sqliteTable("sponsors", {
     .default(sql`(unixepoch() * 1000)`),
 });
 
+export const authors = sqliteTable(
+  "authors",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    bio: text("bio"),
+    avatarUrl: text("avatar_url"),
+    payoutAddress: text("payout_address").notNull(),
+    meTokenAddress: text("me_token_address"),
+    meTokenSymbol: text("me_token_symbol"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    uniqueIndex("authors_slug_unique").on(table.slug),
+  ],
+);
+
 export const posts = sqliteTable(
   "posts",
   {
     id: text("id").primaryKey(),
     slug: text("slug").notNull(),
     title: text("title").notNull(),
+    authorId: text("author_id").references(() => authors.id),
     status: text("status", { enum: postStatusEnum }).notNull().default("draft"),
     publishedAt: integer("published_at", { mode: "timestamp_ms" }),
     teaserText: text("teaser_text"),
     emailSubject: text("email_subject"),
     emailHtml: text("email_html"),
     bodyHtml: text("body_html"),
+    freeContent: text("free_content"),
+    gatedContent: text("gated_content"),
+    isGated: integer("is_gated", { mode: "boolean" }).notNull().default(false),
+    gatePriceUsdc: real("gate_price_usdc").default(1.0),
     canonicalUrl: text("canonical_url"),
     sourceGuid: text("source_guid"),
     source: text("source", { enum: postSourceEnum }),

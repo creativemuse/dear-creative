@@ -857,7 +857,7 @@ export async function synthesizeSpeechWithGoogle(input: {
   }
 
   const fetchImpl = input.fetchFn ?? fetch;
-  const cleanText = input.text.trim().slice(0, 2500);
+  const cleanText = input.text.trim().slice(0, 10000);
   if (!cleanText) {
     throw new Error("Text is required for speech synthesis");
   }
@@ -960,7 +960,7 @@ export async function synthesizeSpeechWithGoogle(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      input: { text: cleanText },
+      input: { text: cleanText.slice(0, 5000) },
       voice: {
         languageCode: "en-US",
         name: "en-US-Journey-D",
