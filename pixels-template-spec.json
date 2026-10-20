@@ -1,0 +1,926 @@
+{
+  "template": {
+    "id": "dear-creative-clips",
+    "name": "Dear Creative Social Clips",
+    "version": "1.0.0",
+    "description": "Generates branded video clips for Dear Creative newsletter posts. Uses post metadata and Lens Grove asset URLs to produce 3 aspect ratios with consistent intro/outro, typography, and audio narration."
+  },
+  "input": {
+    "type": "object",
+    "required": ["postSlug"],
+    "properties": {
+      "postSlug": {
+        "type": "string",
+        "description": "URL slug of the Dear Creative post (e.g., 'creative-pulse-weekly-dispatch-2024-01-15')"
+      },
+      "paymentConfig": {
+        "type": "object",
+        "description": "Optional X402 payment configuration",
+        "properties": {
+          "accountId": {
+            "type": "string",
+            "description": "Billing account ID (wallet address or API key)"
+          },
+          "treasuryAddress": {
+            "type": "string",
+            "description": "Platform treasury address for CRTVAI deposits"
+          },
+          "premium": {
+            "type": "boolean",
+            "default": false,
+            "description": "Use premium interval pricing"
+          },
+          "ledgerPath": {
+            "type": "string",
+            "description": "Path to credit ledger JSON file"
+          }
+        }
+      },
+      "outputFormats": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["9:16", "16:9", "1:1"]
+        },
+        "default": ["9:16", "16:9", "1:1"],
+        "description": "Aspect ratios to generate"
+      },
+      "durationSeconds": {
+        "type": "number",
+        "minimum": 5,
+        "maximum": 60,
+        "default": 15,
+        "description": "Target duration per clip (auto-adjusted to audio length)"
+      },
+      "usePostAudio": {
+        "type": "boolean",
+        "default": true,
+        "description": "Use post's pre-generated audioUrl for narration"
+      }
+    }
+  },
+  "postData": {
+    "type": "object",
+    "required": ["title", "slug", "teaserText", "publishedAt"],
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Post UUID"
+      },
+      "slug": {
+        "type": "string",
+        "description": "URL slug"
+      },
+      "title": {
+        "type": "string",
+        "description": "Post title"
+      },
+      "teaserText": {
+        "type": "string",
+        "description": "1-2 sentence teaser for social preview"
+      },
+      "publishedAt": {
+        "type": "integer",
+        "description": "Unix timestamp (ms) of publication"
+      },
+      "audioUrl": {
+        "type": "string",
+        "format": "uri",
+        "description": "Lens Grove URL to pre-generated MP3 narration"
+      },
+      "audioVoice": {
+        "type": "string",
+        "description": "TTS voice used (e.g., 'Puck', 'Aoede')"
+      },
+      "bannerUrls": {
+        "type": "object",
+        "description": "Lens Grove URLs for banner images by aspect ratio",
+        "properties": {
+          "16:9": {
+            "type": "string",
+            "format": "uri"
+          },
+          "1:1": {
+            "type": "string",
+            "format": "uri"
+          },
+          "21:9": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "videoUrls": {
+        "type": "object",
+        "description": "Lens Grove URLs for video clips by aspect ratio",
+        "properties": {
+          "16:9": {
+            "type": "string",
+            "format": "uri"
+          },
+          "9:16": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    }
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "reel9x16": {
+        "type": "object",
+        "description": "9:16 Reel/Short/TikTok (1080x1920)",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Lens Grove gateway URL (https://api.grove.storage/...)"
+          },
+          "uri": {
+            "type": "string",
+            "description": "Lens Grove URI (lens://...)"
+          },
+          "storageKey": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "width": {
+            "type": "integer",
+            "const": 1080
+          },
+          "height": {
+            "type": "integer",
+            "const": 1920
+          },
+          "fps": {
+            "type": "integer",
+            "const": 30
+          },
+          "codec": {
+            "type": "string",
+            "const": "h264"
+          },
+          "container": {
+            "type": "string",
+            "const": "mp4"
+          }
+        }
+      },
+      "short16x9": {
+        "type": "object",
+        "description": "16:9 YouTube Short / embed (1920x1080)",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "uri": {
+            "type": "string"
+          },
+          "storageKey": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "width": {
+            "type": "integer",
+            "const": 1920
+          },
+          "height": {
+            "type": "integer",
+            "const": 1080
+          },
+          "fps": {
+            "type": "integer",
+            "const": 30
+          },
+          "codec": {
+            "type": "string",
+            "const": "h264"
+          },
+          "container": {
+            "type": "string",
+            "const": "mp4"
+          }
+        }
+      },
+      "thumbnail1x1": {
+        "type": "object",
+        "description": "1:1 thumbnail / feed (1080x1080)",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "uri": {
+            "type": "string"
+          },
+          "storageKey": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer",
+            "const": 1080
+          },
+          "height": {
+            "type": "integer",
+            "const": 1080
+          }
+        }
+      }
+    }
+  },
+  "branding": {
+    "name": "Dear Creative",
+    "tagline": "Creative technology for independent builders",
+    "colors": {
+      "primary": "#1a1a2e",
+      "secondary": "#16213e",
+      "accent": "#e94560",
+      "highlight": "#0f3460",
+      "textPrimary": "#ffffff",
+      "textSecondary": "#b8c5d6",
+      "background": "#0a0a12"
+    },
+    "typography": {
+      "fontFamily": "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
+      "fontWeights": {
+        "regular": 400,
+        "medium": 500,
+        "semibold": 600,
+        "bold": 700
+      },
+      "sizes": {
+        "title": 72,
+        "teaser": 36,
+        "quote": 42,
+        "cta": 28,
+        "meta": 20
+      }
+    },
+    "logo": {
+      "type": "text",
+      "text": "Dear Creative",
+      "style": {
+        "fontSize": 48,
+        "fontWeight": 700,
+        "letterSpacing": "0.02em",
+        "color": "#ffffff",
+        "gradient": ["#e94560", "#0f3460", "#1a1a2e"],
+        "gradientAngle": 135
+      }
+    }
+  },
+  "contentFlow": [
+    {
+      "id": "intro",
+      "type": "banner",
+      "duration": 2.0,
+      "description": "Full-screen banner image with logo overlay",
+      "layers": [
+        {
+          "type": "video",
+          "source": "banner",
+          "fit": "cover"
+        },
+        {
+          "type": "text",
+          "content": "{{branding.logo.text}}",
+          "style": "{{branding.logo.style}}",
+          "position": "center",
+          "animation": {
+            "type": "fadeIn",
+            "duration": 1.0,
+            "delay": 0.2
+          }
+        }
+      ]
+    },
+    {
+      "id": "titleCard",
+      "type": "text",
+      "duration": 3.0,
+      "description": "Post title on branded background",
+      "layers": [
+        {
+          "type": "solid",
+          "color": "{{branding.colors.primary}}"
+        },
+        {
+          "type": "text",
+          "content": "{{post.title}}",
+          "style": {
+            "fontSize": "{{branding.typography.sizes.title}}",
+            "fontWeight": "{{branding.typography.fontWeights.bold}}",
+            "color": "{{branding.colors.textPrimary}}",
+            "textAlign": "center",
+            "maxWidth": "85%"
+          },
+          "position": "center",
+          "animation": {
+            "type": "slideUp",
+            "duration": 0.8,
+            "delay": 0.3
+          }
+        }
+      ]
+    },
+    {
+      "id": "teaser",
+      "type": "text",
+      "duration": 4.0,
+      "description": "Teaser text with subtle animation",
+      "layers": [
+        {
+          "type": "solid",
+          "color": "{{branding.colors.secondary}}"
+        },
+        {
+          "type": "text",
+          "content": "{{post.teaserText}}",
+          "style": {
+            "fontSize": "{{branding.typography.sizes.teaser}}",
+            "fontWeight": "{{branding.typography.fontWeights.medium}}",
+            "color": "{{branding.colors.textSecondary}}",
+            "textAlign": "center",
+            "lineHeight": 1.5,
+            "maxWidth": "80%"
+          },
+          "position": "center",
+          "animation": {
+            "type": "fadeIn",
+            "duration": 0.6,
+            "delay": 0.2
+          }
+        }
+      ]
+    },
+    {
+      "id": "keyQuote",
+      "type": "quote",
+      "duration": 4.0,
+      "description": "Key quote or highlight from post",
+      "layers": [
+        {
+          "type": "gradient",
+          "colors": ["{{branding.colors.highlight}}", "{{branding.colors.primary}}"],
+          "angle": 45
+        },
+        {
+          "type": "decorative",
+          "element": "quotationMark",
+          "position": "topLeft",
+          "size": 80,
+          "color": "{{branding.colors.accent}}",
+          "opacity": 0.3
+        },
+        {
+          "type": "text",
+          "content": "{{post.keyQuote || post.teaserText}}",
+          "style": {
+            "fontSize": "{{branding.typography.sizes.quote}}",
+            "fontWeight": "{{branding.typography.fontWeights.semibold}}",
+            "color": "{{branding.colors.textPrimary}}",
+            "textAlign": "center",
+            "fontStyle": "italic",
+            "maxWidth": "75%"
+          },
+          "position": "center",
+          "animation": {
+            "type": "scaleIn",
+            "duration": 0.7,
+            "delay": 0.2
+          }
+        }
+      ]
+    },
+    {
+      "id": "cta",
+      "type": "cta",
+      "duration": 2.5,
+      "description": "Call to action: subscribe / tip",
+      "layers": [
+        {
+          "type": "solid",
+          "color": "{{branding.colors.primary}}"
+        },
+        {
+          "type": "text",
+          "content": "Subscribe at dearcreative.xyz",
+          "style": {
+            "fontSize": "{{branding.typography.sizes.cta}}",
+            "fontWeight": "{{branding.typography.fontWeights.semibold}}",
+            "color": "{{branding.colors.accent}}",
+            "textAlign": "center"
+          },
+          "position": {
+            "x": "50%",
+            "y": "45%"
+          },
+          "animation": {
+            "type": "pulse",
+            "duration": 1.5,
+            "iterations": 1
+          }
+        },
+        {
+          "type": "text",
+          "content": "Tip the author • Share this issue",
+          "style": {
+            "fontSize": "{{branding.typography.sizes.meta}}",
+            "fontWeight": "{{branding.typography.fontWeights.regular}}",
+            "color": "{{branding.colors.textSecondary}}",
+            "textAlign": "center"
+          },
+          "position": {
+            "x": "50%",
+            "y": "60%"
+          }
+        },
+        {
+          "type": "text",
+          "content": "{{branding.logo.text}}",
+          "style": {
+            "fontSize": 24,
+            "fontWeight": 700,
+            "color": "{{branding.colors.textPrimary}}",
+            "textAlign": "center"
+          },
+          "position": {
+            "x": "50%",
+            "y": "80%"
+          }
+        }
+      ]
+    }
+  ],
+  "audio": {
+    "source": "post",
+    "narration": {
+      "usePostAudioUrl": true,
+      "fallbackTts": {
+        "enabled": true,
+        "voice": "Puck",
+        "speed": 1.0
+      }
+    },
+    "backgroundMusic": {
+      "enabled": false
+    },
+    "masterVolume": 1.0,
+    "normalizeLoudness": true,
+    "targetLufs": -16
+  },
+  "renderSettings": {
+    "9:16": {
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "codec": "h264",
+      "container": "mp4",
+      "quality": "high",
+      "gpuDensity": "light"
+    },
+    "16:9": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "codec": "h264",
+      "container": "mp4",
+      "quality": "high",
+      "gpuDensity": "light"
+    },
+    "1:1": {
+      "width": 1080,
+      "height": 1080,
+      "fps": 30,
+      "codec": "h264",
+      "container": "mp4",
+      "quality": "high",
+      "gpuDensity": "light"
+    }
+  },
+  "payment": {
+    "method": "x402_usdc",
+    "chain": "base",
+    "chainId": 8453,
+    "token": "USDC",
+    "tokenAddress": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "billingMiddleware": "headless/mcp-server-billing.mjs",
+    "pricing": {
+      "renderIntervalCostUsdc6": 1000000,
+      "premiumIntervalCostUsdc6": 500000,
+      "editOpCostUsdc6": 10000
+    }
+  },
+  "projectTemplates": {
+    "9:16": {
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "backgroundColor": "{{branding.colors.background}}",
+      "duration": "{{contentFlow.totalDuration}}",
+      "tracks": [
+        {
+          "id": "video-1",
+          "name": "V1 - Main Video",
+          "kind": "video",
+          "order": 0
+        },
+        {
+          "id": "video-2",
+          "name": "V2 - Overlays",
+          "kind": "video",
+          "order": 1
+        },
+        {
+          "id": "audio-1",
+          "name": "A1 - Narration",
+          "kind": "audio",
+          "order": 2
+        }
+      ]
+    },
+    "16:9": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "backgroundColor": "{{branding.colors.background}}",
+      "duration": "{{contentFlow.totalDuration}}",
+      "tracks": [
+        {
+          "id": "video-1",
+          "name": "V1 - Main Video",
+          "kind": "video",
+          "order": 0
+        },
+        {
+          "id": "video-2",
+          "name": "V2 - Overlays",
+          "kind": "video",
+          "order": 1
+        },
+        {
+          "id": "audio-1",
+          "name": "A1 - Narration",
+          "kind": "audio",
+          "order": 2
+        }
+      ]
+    },
+    "1:1": {
+      "width": 1080,
+      "height": 1080,
+      "fps": 30,
+      "backgroundColor": "{{branding.colors.background}}",
+      "duration": "{{contentFlow.totalDuration}}",
+      "tracks": [
+        {
+          "id": "video-1",
+          "name": "V1 - Main",
+          "kind": "video",
+          "order": 0
+        },
+        {
+          "id": "audio-1",
+          "name": "A1 - Narration",
+          "kind": "audio",
+          "order": 1
+        }
+      ]
+    }
+  },
+  "editSequence": [
+    {
+      "step": "importMedia",
+      "description": "Import banner, video, and audio assets from Lens Grove URLs",
+      "operations": [
+        {
+          "op": "importMedia",
+          "mediaId": "banner-{{aspectRatio}}",
+          "url": "{{post.bannerUrls[aspectRatio]}}"
+        },
+        {
+          "op": "importMedia",
+          "mediaId": "video-{{aspectRatio}}",
+          "url": "{{post.videoUrls[aspectRatio]}}"
+        },
+        {
+          "op": "importMedia",
+          "mediaId": "audio-narration",
+          "url": "{{post.audioUrl}}"
+        }
+      ]
+    },
+    {
+      "step": "buildTimeline",
+      "description": "Add clips and text items to timeline per contentFlow",
+      "operations": [
+        {
+          "op": "addClip",
+          "callerId": "introClip",
+          "mediaId": "banner-{{aspectRatio}}",
+          "trackId": "video-1",
+          "from": 0,
+          "durationInFrames": "{{frames(2.0)}}"
+        },
+        {
+          "op": "addText",
+          "callerId": "introLogo",
+          "trackId": "video-2",
+          "from": 0,
+          "durationInFrames": "{{frames(2.0)}}",
+          "text": "{{branding.logo.text}}",
+          "fontSize": 48,
+          "fontWeight": "bold",
+          "color": "#ffffff",
+          "textAlign": "center",
+          "verticalAlign": "middle",
+          "transform": {
+            "opacity": 0
+          }
+        },
+        {
+          "op": "addKeyframe",
+          "callerId": "logoFadeIn",
+          "itemId": "{{$ref: 'introLogo#/detail/id'}}",
+          "property": "opacity",
+          "frame": 6,
+          "value": 1,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addText",
+          "callerId": "titleText",
+          "trackId": "video-2",
+          "from": "{{frames(2.0)}}",
+          "durationInFrames": "{{frames(3.0)}}",
+          "text": "{{post.title}}",
+          "fontSize": 72,
+          "fontWeight": "bold",
+          "color": "#ffffff",
+          "textAlign": "center",
+          "verticalAlign": "middle",
+          "transform": {
+            "y": 100,
+            "opacity": 0
+          }
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'titleText#/detail/id'}}",
+          "property": "y",
+          "frame": "{{frames(2.0) + 24}}",
+          "value": 0,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'titleText#/detail/id'}}",
+          "property": "opacity",
+          "frame": "{{frames(2.0) + 24}}",
+          "value": 1,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addText",
+          "callerId": "teaserText",
+          "trackId": "video-2",
+          "from": "{{frames(5.0)}}",
+          "durationInFrames": "{{frames(4.0)}}",
+          "text": "{{post.teaserText}}",
+          "fontSize": 36,
+          "fontWeight": "medium",
+          "color": "#b8c5d6",
+          "textAlign": "center",
+          "verticalAlign": "middle",
+          "transform": {
+            "opacity": 0
+          }
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'teaserText#/detail/id'}}",
+          "property": "opacity",
+          "frame": "{{frames(5.0) + 18}}",
+          "value": 1,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addText",
+          "callerId": "quoteText",
+          "trackId": "video-2",
+          "from": "{{frames(9.0)}}",
+          "durationInFrames": "{{frames(4.0)}}",
+          "text": "{{post.keyQuote || post.teaserText}}",
+          "fontSize": 42,
+          "fontWeight": "semibold",
+          "color": "#ffffff",
+          "textAlign": "center",
+          "verticalAlign": "middle",
+          "transform": {
+            "scale": 0.8,
+            "opacity": 0
+          }
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'quoteText#/detail/id'}}",
+          "property": "scale",
+          "frame": "{{frames(9.0) + 21}}",
+          "value": 1,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'quoteText#/detail/id'}}",
+          "property": "opacity",
+          "frame": "{{frames(9.0) + 21}}",
+          "value": 1,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addText",
+          "callerId": "ctaPrimary",
+          "trackId": "video-2",
+          "from": "{{frames(13.0)}}",
+          "durationInFrames": "{{frames(2.5)}}",
+          "text": "Subscribe at dearcreative.xyz",
+          "fontSize": 28,
+          "fontWeight": "semibold",
+          "color": "#e94560",
+          "textAlign": "center",
+          "verticalAlign": "middle",
+          "transform": {
+            "y": 100
+          }
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'ctaPrimary#/detail/id'}}",
+          "property": "y",
+          "frame": "{{frames(13.0) + 15}}",
+          "value": -100,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'ctaPrimary#/detail/id'}}",
+          "property": "opacity",
+          "frame": "{{frames(13.0) + 15}}",
+          "value": 1,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'ctaPrimary#/detail/id'}}",
+          "property": "y",
+          "frame": "{{frames(14.5) + 15}}",
+          "value": -100,
+          "easing": "ease-in"
+        },
+        {
+          "op": "addText",
+          "callerId": "ctaSecondary",
+          "trackId": "video-2",
+          "from": "{{frames(13.0)}}",
+          "durationInFrames": "{{frames(2.5)}}",
+          "text": "Tip the author • Share this issue",
+          "fontSize": 20,
+          "fontWeight": "regular",
+          "color": "#b8c5d6",
+          "textAlign": "center",
+          "verticalAlign": "middle",
+          "transform": {
+            "y": 180
+          }
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'ctaSecondary#/detail/id'}}",
+          "property": "y",
+          "frame": "{{frames(13.0) + 20}}",
+          "value": -20,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addKeyframe",
+          "itemId": "{{$ref: 'ctaSecondary#/detail/id'}}",
+          "property": "opacity",
+          "frame": "{{frames(13.0) + 20}}",
+          "value": 1,
+          "easing": "ease-out"
+        },
+        {
+          "op": "addText",
+          "callerId": "ctaLogo",
+          "trackId": "video-2",
+          "from": "{{frames(13.0)}}",
+          "durationInFrames": "{{frames(2.5)}}",
+          "text": "{{branding.logo.text}}",
+          "fontSize": 24,
+          "fontWeight": "bold",
+          "color": "#ffffff",
+          "textAlign": "center",
+          "verticalAlign": "middle",
+          "transform": {
+            "y": 280
+          }
+        }
+      ]
+    },
+    {
+      "step": "addAudio",
+      "description": "Add narration audio track",
+      "operations": [
+        {
+          "op": "addClip",
+          "callerId": "audioClip",
+          "mediaId": "audio-narration",
+          "trackId": "audio-1",
+          "from": 0,
+          "durationInFrames": "{{frames(contentFlow.totalDuration)}}"
+        }
+      ]
+    },
+    {
+      "step": "addTransitions",
+      "description": "Smooth transitions between sections",
+      "operations": [
+        {
+          "op": "addTransition",
+          "leftClipId": "{{$ref: 'introClip#/detail/id'}}",
+          "rightClipId": "titleText",
+          "durationInFrames": 15,
+          "presentation": "crossfade"
+        },
+        {
+          "op": "addTransition",
+          "leftClipId": "titleText",
+          "rightClipId": "teaserText",
+          "durationInFrames": 15,
+          "presentation": "crossfade"
+        },
+        {
+          "op": "addTransition",
+          "leftClipId": "teaserText",
+          "rightClipId": "quoteText",
+          "durationInFrames": 15,
+          "presentation": "crossfade"
+        },
+        {
+          "op": "addTransition",
+          "leftClipId": "quoteText",
+          "rightClipId": "ctaPrimary",
+          "durationInFrames": 15,
+          "presentation": "crossfade"
+        }
+      ]
+    }
+  ],
+  "helpers": {
+    "frames": {
+      "description": "Convert seconds to frames at 30fps",
+      "expression": "Math.round(seconds * 30)"
+    },
+    "contentFlow.totalDuration": {
+      "description": "Sum of all contentFlow segment durations",
+      "value": 15.5
+    }
+  },
+  "validation": {
+    "requiredPostFields": [
+      "title",
+      "slug",
+      "teaserText",
+      "publishedAt",
+      "audioUrl"
+    ],
+    "requiredBannerAspectRatios": [
+      "16:9",
+      "1:1"
+    ],
+    "requiredVideoAspectRatios": [
+      "16:9",
+      "9:16"
+    ],
+    "minDurationSeconds": 5,
+    "maxDurationSeconds": 60
+  },
+  "example": {
+    "postSlug": "creative-pulse-weekly-dispatch-2024-01-15",
+    "outputFormats": ["9:16", "16:9", "1:1"],
+    "durationSeconds": 15,
+    "usePostAudio": true,
+    "paymentConfig": {
+      "accountId": "0x1234...",
+      "treasuryAddress": "0xabcd...",
+      "premium": false
+    }
+  }
+}
