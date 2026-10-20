@@ -98,4 +98,26 @@ describe("chat-history", () => {
     );
     expect(bundle?.messages[1]?.content).toContain("That sounds like a fascinating topic");
   });
+
+  it("self-heals on unmigrated database missing adam_chat_threads without throwing", async () => {
+    const rawClient = createClient({ url: ":memory:" });
+    const rawDb = drizzle({ client: rawClient, schema });
+    // Intentionally DO NOT run drizzle migrations on rawDb
+    const thread = await createChatThread(rawDb, { title: "Unmigrated DB Thread" });
+    expect(thread.id).toMatch(/^thread_/);
+
+    const message = await addChatMessage(rawDb, {
+      threadId: thread.id,
+      role: "user",
+      content: "Hello on raw unmigrated DB",
+    });
+    expect(message.id).toMatch(/^msg_/);
+    expect(message.content).toBe("Hello on raw unmigrated DB");
+
+    const list = await listChatThreads(rawDb);
+    expect(list.length).toBe(1);
+    expect(list[0]?.id).toBe(thread.id);
+
+    rawClient.close();
+  });
 });

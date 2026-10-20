@@ -58,41 +58,60 @@ export async function POST(request: Request) {
     const db = getDb();
     let threadId = body.threadId?.trim();
 
-    if (threadId) {
-      const existing = await getChatThread(db, threadId);
-      if (!existing) {
+    try {
+      if (threadId) {
+        const existing = await getChatThread(db, threadId);
+        if (!existing) {
+          const created = await createChatThread(db, {
+            title: autoGenerateThreadTitle(message || "Editorial Review"),
+          });
+          threadId = created.id;
+        }
+      } else {
         const created = await createChatThread(db, {
           title: autoGenerateThreadTitle(message || "Editorial Review"),
         });
         threadId = created.id;
       }
-    } else {
-      const created = await createChatThread(db, {
-        title: autoGenerateThreadTitle(message || "Editorial Review"),
-      });
-      threadId = created.id;
+    } catch (err) {
+      console.warn("Thread init DB warning:", err);
+      if (!threadId) {
+        threadId = `thread_${crypto.randomUUID()}`;
+      }
     }
 
-    // Persist incoming user message
-    await addChatMessage(db, {
-      threadId,
-      role: "user",
-      content:
-        message ||
-        "Please analyze the attached file(s) and share editorial notes.",
-      attachments,
-    });
+    if (!threadId) {
+      threadId = `thread_${crypto.randomUUID()}`;
+    }
+
+    // Persist incoming user message (non-fatal if persistence is unmigrated)
+    try {
+      await addChatMessage(db, {
+        threadId,
+        role: "user",
+        content:
+          message ||
+          "Please analyze the attached file(s) and share editorial notes.",
+        attachments,
+      });
+    } catch (err) {
+      console.warn("User message persist warning:", err);
+    }
 
     // If client didn't supply full history array, reconstruct from DB
     let history = Array.isArray(body.history) ? body.history : [];
     if (history.length === 0) {
-      const dbMessages = await getThreadMessages(db, threadId);
-      // dbMessages includes the just-saved user message as the last item
-      // chatWithAdam takes previous history, excluding the current message
-      history = dbMessages.slice(0, -1).map((m) => ({
-        role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant",
-        content: m.content,
-      }));
+      try {
+        const dbMessages = await getThreadMessages(db, threadId);
+        // dbMessages includes the just-saved user message as the last item
+        // chatWithAdam takes previous history, excluding the current message
+        history = dbMessages.slice(0, -1).map((m) => ({
+          role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant",
+          content: m.content,
+        }));
+      } catch {
+        history = [];
+      }
     }
 
     const result = await chatWithAdam(db, {
@@ -105,14 +124,18 @@ export async function POST(request: Request) {
       forceGenerateBanner: Boolean(body.forceGenerateBanner),
     });
 
-    // Persist Adam model response
-    await addChatMessage(db, {
-      threadId,
-      role: "model",
-      content: result.reply,
-      createdDraftPostId: result.createdDraft?.postId,
-      createdApprovalId: result.createdDraft?.approvalId,
-    });
+    // Persist Adam model response (non-fatal)
+    try {
+      await addChatMessage(db, {
+        threadId,
+        role: "model",
+        content: result.reply,
+        createdDraftPostId: result.createdDraft?.postId,
+        createdApprovalId: result.createdDraft?.approvalId,
+      });
+    } catch (err) {
+      console.warn("Model response persist warning:", err);
+    }
 
     if (result.createdDraft) {
       revalidateTag("posts-recent", "max");
