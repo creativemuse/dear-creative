@@ -6,10 +6,7 @@
  */
 
 import { GaplessAudioQueue } from "./gapless-audio-queue";
-import {
-  extractCompleteSentences,
-  splitArticleIntoSentences,
-} from "./sentence-splitter";
+import { splitArticleIntoSentences } from "./sentence-splitter";
 
 export type KokoroVoice =
   | "am_adam"

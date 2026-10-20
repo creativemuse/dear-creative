@@ -29,7 +29,7 @@ export function DispatchAudioPlayer({
   const [playbackRate, setPlaybackRate] = useState<1 | 1.25 | 1.5>(1);
   const [voice, setVoice] = useState<KokoroVoice>("am_adam");
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(listenMinutes * 60);
+  const [duration] = useState(listenMinutes * 60);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isUsingFallbackSpeech, setIsUsingFallbackSpeech] = useState(false);
 
@@ -38,6 +38,28 @@ export function DispatchAudioPlayer({
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const plainText = `${title}. ${excerpt ? excerpt + ". " : ""}${stripHtmlTags(bodyHtml ?? "")}`;
+
+  // Fallback to local Web Speech API
+  const fallbackToBrowserSpeech = useCallback(() => {
+    setIsUsingFallbackSpeech(true);
+    setStatusMessage(null);
+    setIsLoading(false);
+
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(plainText);
+      utterance.rate = playbackRate;
+      utterance.onend = () => {
+        setIsPlaying(false);
+        setIsPaused(false);
+        setCurrentTime(duration);
+      };
+      utteranceRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+      setIsPlaying(true);
+      setIsPaused(false);
+    }
+  }, [plainText, playbackRate, duration]);
 
   // Initialize or retrieve queue
   const getQueue = useCallback(() => {
@@ -170,29 +192,7 @@ export function DispatchAudioPlayer({
     } finally {
       setIsLoading(false);
     }
-  }, [isPlaying, isPaused, getQueue, isUsingFallbackSpeech, playbackRate, plainText, voice]);
-
-  // Fallback to local Web Speech API
-  const fallbackToBrowserSpeech = () => {
-    setIsUsingFallbackSpeech(true);
-    setStatusMessage(null);
-    setIsLoading(false);
-
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(plainText);
-      utterance.rate = playbackRate;
-      utterance.onend = () => {
-        setIsPlaying(false);
-        setIsPaused(false);
-        setCurrentTime(duration);
-      };
-      utteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
-      setIsPlaying(true);
-      setIsPaused(false);
-    }
-  };
+  }, [isPlaying, isPaused, getQueue, isUsingFallbackSpeech, playbackRate, plainText, voice, fallbackToBrowserSpeech]);
 
   // Handle speed change
   const handleSpeedToggle = () => {

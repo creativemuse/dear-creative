@@ -3,7 +3,6 @@ import { sanitizeArticleHtml } from "./sanitize-article-html";
 import {
   generateVideoEmbedHtml,
   isSupportedVideoUrl,
-  parseVideoUrl,
 } from "./video-embed";
 
 function escapeHtml(text: string): string {
