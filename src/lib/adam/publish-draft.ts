@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { corePostColumns, ensurePostsSchema } from "@/db/ensure-schema";
 import { approvals, posts } from "@/db/schema";
 import { computeApprovalContentHash } from "@/lib/approval/content-hash";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
@@ -67,6 +68,7 @@ export async function publishDraftToTurso(
     };
   }
 
+  await ensurePostsSchema(db);
   const existing = await findPostBySlug(db, snapshot.slug);
   if (existing) {
     throw new DuplicateSlugError(snapshot.slug);
@@ -106,6 +108,11 @@ export async function publishDraftToTurso(
 }
 
 export async function findPostBySlug(db: DearCreativeDb, slug: string) {
-  const rows = await db.select().from(posts).where(eq(posts.slug, slug)).limit(1);
+  await ensurePostsSchema(db);
+  const rows = await db
+    .select(corePostColumns)
+    .from(posts)
+    .where(eq(posts.slug, slug))
+    .limit(1);
   return rows[0] ?? null;
 }

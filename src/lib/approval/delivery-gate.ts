@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { DearCreativeDb } from "@/db/client";
+import { corePostColumns, ensurePostsSchema } from "@/db/ensure-schema";
 import {
   approvals,
   deliveryChannelEnum,
@@ -42,7 +43,12 @@ export async function assertDeliverable(
   | { ok: true; value: DeliveryGateSuccess }
   | { ok: false; reason: DeliveryGateFailure }
 > {
-  const postRows = await db.select().from(posts).where(eq(posts.id, postId)).limit(1);
+  await ensurePostsSchema(db);
+  const postRows = await db
+    .select(corePostColumns)
+    .from(posts)
+    .where(eq(posts.id, postId))
+    .limit(1);
   const post = postRows[0];
   if (!post) {
     return { ok: false, reason: "not_found" };
